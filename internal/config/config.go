@@ -1,0 +1,194 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"strconv"
+
+	"github.com/BurntSushi/toml"
+)
+
+type Config struct {
+	LLM       LLMConfig       `toml:"llm"`
+	Embedding EmbeddingConfig `toml:"embedding"`
+	Database  DatabaseConfig  `toml:"database"`
+	Server    ServerConfig    `toml:"server"`
+}
+
+type LLMConfig struct {
+	Enabled       bool    `toml:"enabled"`
+	Provider      string  `toml:"provider"`
+	Model         string  `toml:"model"`
+	APIKey        string  `toml:"api_key"`
+	BaseURL       string  `toml:"base_url"`
+	Temperature   float32 `toml:"temperature"`
+	MaxTokens     int     `toml:"max_tokens"`
+	ContextWindow int     `toml:"context_window"`
+	TimeoutSecs   int     `toml:"timeout_secs"`
+}
+
+type EmbeddingConfig struct {
+	Provider  string `toml:"provider"`
+	Model     string `toml:"model"`
+	Dimension int    `toml:"dimension"`
+	BaseURL   string `toml:"base_url"`
+	APIKey    string `toml:"api_key"`
+	BatchSize int    `toml:"batch_size"`
+}
+
+type DatabaseConfig struct {
+	Backend   string         `toml:"backend"`
+	SurrealDB SurrealDBConfig `toml:"surrealdb"`
+}
+
+type SurrealDBConfig struct {
+	URL       string `toml:"url"`
+	Namespace string `toml:"namespace"`
+	Database  string `toml:"database"`
+	Username  string `toml:"username"`
+	Password  string `toml:"password"`
+}
+
+type ServerConfig struct {
+	Mode string `toml:"mode"`
+	Port int    `toml:"port"`
+}
+
+func Load(path string) (*Config, error) {
+	cfg := DefaultConfig()
+
+	// Try to load from file
+	if path != "" {
+		if _, err := toml.DecodeFile(path, cfg); err != nil {
+			return nil, err
+		}
+	} else {
+		// Try default locations
+		locations := []string{
+			".codeloom/config.toml",
+			filepath.Join(os.Getenv("HOME"), ".codeloom/config.toml"),
+			"/etc/codeloom/config.toml",
+		}
+		for _, loc := range locations {
+			if _, err := os.Stat(loc); err == nil {
+				if _, err := toml.DecodeFile(loc, cfg); err == nil {
+					break
+				}
+			}
+		}
+	}
+
+	// Override with environment variables
+	applyEnvOverrides(cfg)
+
+	return cfg, nil
+}
+
+func DefaultConfig() *Config {
+	return &Config{
+		LLM: LLMConfig{
+			Enabled:       true,
+			Provider:      "openai-compatible",
+			Model:         "gpt-4",
+			Temperature:   0.1,
+			MaxTokens:     4096,
+			ContextWindow: 128000,
+			TimeoutSecs:   120,
+		},
+		Embedding: EmbeddingConfig{
+			Provider:  "ollama",
+			Model:     "nomic-embed-text",
+			Dimension: 768,
+			BaseURL:   "http://localhost:11434",
+			BatchSize: 64,
+		},
+		Database: DatabaseConfig{
+			Backend: "surrealdb",
+			SurrealDB: SurrealDBConfig{
+				URL:       "ws://localhost:3004",
+				Namespace: "codeloom",
+				Database:  "main",
+				Username:  "root",
+				Password:  "root",
+			},
+		},
+		Server: ServerConfig{
+			Mode: "stdio",
+			Port: 3003,
+		},
+	}
+}
+
+func applyEnvOverrides(cfg *Config) {
+	// LLM settings
+	if v := os.Getenv("CODEGRAPH_LLM_PROVIDER"); v != "" {
+		cfg.LLM.Provider = v
+	}
+	if v := os.Getenv("CODEGRAPH_MODEL"); v != "" {
+		cfg.LLM.Model = v
+	}
+	if v := os.Getenv("CODEGRAPH_OPENAI_COMPATIBLE_URL"); v != "" {
+		cfg.LLM.BaseURL = v
+	}
+	if v := os.Getenv("OPENAI_BASE_URL"); v != "" && cfg.LLM.BaseURL == "" {
+		cfg.LLM.BaseURL = v
+	}
+	if v := os.Getenv("OPENAI_API_KEY"); v != "" {
+		cfg.LLM.APIKey = v
+	}
+	if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" && cfg.LLM.Provider == "anthropic" {
+		cfg.LLM.APIKey = v
+	}
+	if v := os.Getenv("CODEGRAPH_CONTEXT_WINDOW"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.LLM.ContextWindow = i
+		}
+	}
+	if v := os.Getenv("CODEGRAPH_MAX_TOKENS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.LLM.MaxTokens = i
+		}
+	}
+
+	// Embedding settings
+	if v := os.Getenv("CODEGRAPH_EMBEDDING_PROVIDER"); v != "" {
+		cfg.Embedding.Provider = v
+	}
+	if v := os.Getenv("CODEGRAPH_EMBEDDING_MODEL"); v != "" {
+		cfg.Embedding.Model = v
+	}
+	if v := os.Getenv("CODEGRAPH_EMBEDDING_DIMENSION"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Embedding.Dimension = i
+		}
+	}
+	if v := os.Getenv("CODEGRAPH_OLLAMA_URL"); v != "" {
+		cfg.Embedding.BaseURL = v
+	}
+
+	// Database settings
+	if v := os.Getenv("CODEGRAPH_SURREALDB_URL"); v != "" {
+		cfg.Database.SurrealDB.URL = v
+	}
+	if v := os.Getenv("CODEGRAPH__DATABASE__SURREALDB__CONNECTION"); v != "" {
+		cfg.Database.SurrealDB.URL = v
+	}
+	if v := os.Getenv("CODEGRAPH_SURREALDB_NAMESPACE"); v != "" {
+		cfg.Database.SurrealDB.Namespace = v
+	}
+	if v := os.Getenv("CODEGRAPH__DATABASE__SURREALDB__NAMESPACE"); v != "" {
+		cfg.Database.SurrealDB.Namespace = v
+	}
+	if v := os.Getenv("CODEGRAPH_SURREALDB_DATABASE"); v != "" {
+		cfg.Database.SurrealDB.Database = v
+	}
+	if v := os.Getenv("CODEGRAPH__DATABASE__SURREALDB__DATABASE"); v != "" {
+		cfg.Database.SurrealDB.Database = v
+	}
+	if v := os.Getenv("CODEGRAPH_SURREALDB_USERNAME"); v != "" {
+		cfg.Database.SurrealDB.Username = v
+	}
+	if v := os.Getenv("CODEGRAPH_SURREALDB_PASSWORD"); v != "" {
+		cfg.Database.SurrealDB.Password = v
+	}
+}

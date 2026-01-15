@@ -1,0 +1,8 @@
+# Binaries
+codegraph
+codegraph-go
+codeloom
+debug_parse
+test_annotations
+test_grammars
+*.exe
