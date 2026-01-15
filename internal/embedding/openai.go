@@ -36,7 +36,7 @@ func NewOpenAIProvider(cfg config.EmbeddingConfig) (*OpenAIProvider, error) {
 
 	model := cfg.Model
 	if model == "" {
-		model = openai.SmallEmbedding3
+		model = string(openai.SmallEmbedding3)
 	}
 
 	return &OpenAIProvider{

@@ -70,6 +70,7 @@ type CodeEdge struct {
 }
 
 func NewStorage(cfg StorageConfig) (*Storage, error) {
+	ctx := context.Background()
 	db, err := surrealdb.New(cfg.URL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to SurrealDB: %w", err)
@@ -77,7 +78,7 @@ func NewStorage(cfg StorageConfig) (*Storage, error) {
 
 	// Sign in
 	if cfg.Username != "" {
-		_, err = db.Signin(map[string]interface{}{
+		_, err = db.SignIn(ctx, map[string]interface{}{
 			"user": cfg.Username,
 			"pass": cfg.Password,
 		})
@@ -87,7 +88,7 @@ func NewStorage(cfg StorageConfig) (*Storage, error) {
 	}
 
 	// Use namespace and database
-	_, err = db.Use(cfg.Namespace, cfg.Database)
+	err = db.Use(ctx, cfg.Namespace, cfg.Database)
 	if err != nil {
 		return nil, fmt.Errorf("failed to use namespace/database: %w", err)
 	}
@@ -100,32 +101,24 @@ func NewStorage(cfg StorageConfig) (*Storage, error) {
 }
 
 func (s *Storage) Close() error {
-	s.db.Close()
-	return nil
+	return s.db.Close(context.Background())
 }
 
 func (s *Storage) UpsertNode(ctx context.Context, node *CodeNode) error {
-	_, err := s.db.Create("nodes", node)
+	_, err := surrealdb.Create[CodeNode](ctx, s.db, "nodes", node)
 	return err
 }
 
 func (s *Storage) UpsertEdge(ctx context.Context, edge *CodeEdge) error {
-	_, err := s.db.Create("edges", edge)
+	_, err := surrealdb.Create[CodeEdge](ctx, s.db, "edges", edge)
 	return err
 }
 
 func (s *Storage) GetNode(ctx context.Context, id string) (*CodeNode, error) {
-	data, err := s.db.Select("nodes:" + id)
+	node, err := surrealdb.Select[CodeNode](ctx, s.db, "nodes:"+id)
 	if err != nil {
 		return nil, err
 	}
-
-	node := &CodeNode{}
-	err = surrealdb.Unmarshal(data, node)
-	if err != nil {
-		return nil, err
-	}
-
 	return node, nil
 }
 
@@ -137,16 +130,17 @@ func (s *Storage) GetTransitiveDependencies(ctx context.Context, nodeID string, 
 		)
 	`
 	// Note: This is simplified - real implementation needs recursive CTE
-	data, err := s.db.Query(query, map[string]interface{}{
+	results, err := surrealdb.Query[[]CodeNode](ctx, s.db, query, map[string]any{
 		"id": nodeID,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	var nodes []CodeNode
-	err = surrealdb.Unmarshal(data, &nodes)
-	return nodes, err
+	if results == nil || len(*results) == 0 {
+		return nil, nil
+	}
+	return (*results)[0].Result, nil
 }
 
 func (s *Storage) TraceCallChain(ctx context.Context, from, to string) ([]CodeEdge, error) {
@@ -154,7 +148,7 @@ func (s *Storage) TraceCallChain(ctx context.Context, from, to string) ([]CodeEd
 		SELECT * FROM edges
 		WHERE from_id = $from AND edge_type = 'calls'
 	`
-	data, err := s.db.Query(query, map[string]interface{}{
+	results, err := surrealdb.Query[[]CodeEdge](ctx, s.db, query, map[string]any{
 		"from": from,
 		"to":   to,
 	})
@@ -162,58 +156,62 @@ func (s *Storage) TraceCallChain(ctx context.Context, from, to string) ([]CodeEd
 		return nil, err
 	}
 
-	var edges []CodeEdge
-	err = surrealdb.Unmarshal(data, &edges)
-	return edges, err
+	if results == nil || len(*results) == 0 {
+		return nil, nil
+	}
+	return (*results)[0].Result, nil
 }
 
 func (s *Storage) SemanticSearch(ctx context.Context, embedding []float32, limit int) ([]CodeNode, error) {
 	// SurrealDB doesn't have native vector search yet
 	// This would need a custom implementation or external service
 	query := `SELECT * FROM nodes LIMIT $limit`
-	data, err := s.db.Query(query, map[string]interface{}{
+	results, err := surrealdb.Query[[]CodeNode](ctx, s.db, query, map[string]any{
 		"limit": limit,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	var nodes []CodeNode
-	err = surrealdb.Unmarshal(data, &nodes)
-	return nodes, err
+	if results == nil || len(*results) == 0 {
+		return nil, nil
+	}
+	return (*results)[0].Result, nil
 }
 
 func (s *Storage) FindByName(ctx context.Context, name string) ([]CodeNode, error) {
 	query := `SELECT * FROM nodes WHERE name CONTAINS $name`
-	data, err := s.db.Query(query, map[string]interface{}{
+	results, err := surrealdb.Query[[]CodeNode](ctx, s.db, query, map[string]any{
 		"name": name,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	var nodes []CodeNode
-	err = surrealdb.Unmarshal(data, &nodes)
-	return nodes, err
+	if results == nil || len(*results) == 0 {
+		return nil, nil
+	}
+	return (*results)[0].Result, nil
 }
 
 func (s *Storage) GetNodesByFile(ctx context.Context, filePath string) ([]CodeNode, error) {
 	query := `SELECT * FROM nodes WHERE file_path = $path`
-	data, err := s.db.Query(query, map[string]interface{}{
+	results, err := surrealdb.Query[[]CodeNode](ctx, s.db, query, map[string]any{
 		"path": filePath,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	var nodes []CodeNode
-	err = surrealdb.Unmarshal(data, &nodes)
-	return nodes, err
+	if results == nil || len(*results) == 0 {
+		return nil, nil
+	}
+	return (*results)[0].Result, nil
 }
 
 func (s *Storage) DeleteNodesByFile(ctx context.Context, filePath string) error {
 	query := `DELETE FROM nodes WHERE file_path = $path`
-	_, err := s.db.Query(query, map[string]interface{}{
+	_, err := surrealdb.Query[any](ctx, s.db, query, map[string]any{
 		"path": filePath,
 	})
 	return err
@@ -247,7 +245,7 @@ func (s *Storage) RunMigrations(ctx context.Context) error {
 	}
 
 	for _, m := range migrations {
-		if _, err := s.db.Query(m, nil); err != nil {
+		if _, err := surrealdb.Query[any](ctx, s.db, m, nil); err != nil {
 			// Ignore "already exists" errors
 			continue
 		}

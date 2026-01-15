@@ -114,7 +114,7 @@ func indexCmd(args []string) {
 }
 
 func printHelp() {
-	fmt.Println(`codeloom - Code intelligence MCP server
+	fmt.Print(`codeloom - Code intelligence MCP server
 
 Commands:
   start <mode>   Start the MCP server (stdio or http)
