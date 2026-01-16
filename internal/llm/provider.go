@@ -67,6 +67,7 @@ type Provider interface {
 	GenerateWithTools(ctx context.Context, messages []Message, tools []Tool) (*ToolCallResponse, error)
 	Stream(ctx context.Context, messages []Message, opts ...Option) (<-chan string, error)
 	Name() string
+	Close() error
 }
 
 type ToolCallResponse struct {

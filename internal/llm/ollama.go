@@ -290,3 +290,7 @@ func (p *OllamaProvider) Stream(ctx context.Context, messages []Message, opts ..
 
 	return ch, nil
 }
+
+func (p *OllamaProvider) Close() error {
+	return nil
+}

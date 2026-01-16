@@ -121,13 +121,13 @@ func DefaultConfig() *Config {
 
 func applyEnvOverrides(cfg *Config) {
 	// LLM settings
-	if v := os.Getenv("CODEGRAPH_LLM_PROVIDER"); v != "" {
+	if v := os.Getenv("CODELOOM_LLM_PROVIDER"); v != "" {
 		cfg.LLM.Provider = v
 	}
-	if v := os.Getenv("CODEGRAPH_MODEL"); v != "" {
+	if v := os.Getenv("CODELOOM_MODEL"); v != "" {
 		cfg.LLM.Model = v
 	}
-	if v := os.Getenv("CODEGRAPH_OPENAI_COMPATIBLE_URL"); v != "" {
+	if v := os.Getenv("CODELOOM_OPENAI_COMPATIBLE_URL"); v != "" {
 		cfg.LLM.BaseURL = v
 	}
 	if v := os.Getenv("OPENAI_BASE_URL"); v != "" && cfg.LLM.BaseURL == "" {
@@ -139,56 +139,56 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" && cfg.LLM.Provider == "anthropic" {
 		cfg.LLM.APIKey = v
 	}
-	if v := os.Getenv("CODEGRAPH_CONTEXT_WINDOW"); v != "" {
+	if v := os.Getenv("CODELOOM_CONTEXT_WINDOW"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
 			cfg.LLM.ContextWindow = i
 		}
 	}
-	if v := os.Getenv("CODEGRAPH_MAX_TOKENS"); v != "" {
+	if v := os.Getenv("CODELOOM_MAX_TOKENS"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
 			cfg.LLM.MaxTokens = i
 		}
 	}
 
 	// Embedding settings
-	if v := os.Getenv("CODEGRAPH_EMBEDDING_PROVIDER"); v != "" {
+	if v := os.Getenv("CODELOOM_EMBEDDING_PROVIDER"); v != "" {
 		cfg.Embedding.Provider = v
 	}
-	if v := os.Getenv("CODEGRAPH_EMBEDDING_MODEL"); v != "" {
+	if v := os.Getenv("CODELOOM_EMBEDDING_MODEL"); v != "" {
 		cfg.Embedding.Model = v
 	}
-	if v := os.Getenv("CODEGRAPH_EMBEDDING_DIMENSION"); v != "" {
+	if v := os.Getenv("CODELOOM_EMBEDDING_DIMENSION"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
 			cfg.Embedding.Dimension = i
 		}
 	}
-	if v := os.Getenv("CODEGRAPH_OLLAMA_URL"); v != "" {
+	if v := os.Getenv("CODELOOM_OLLAMA_URL"); v != "" {
 		cfg.Embedding.BaseURL = v
 	}
 
 	// Database settings
-	if v := os.Getenv("CODEGRAPH_SURREALDB_URL"); v != "" {
+	if v := os.Getenv("CODELOOM_SURREALDB_URL"); v != "" {
 		cfg.Database.SurrealDB.URL = v
 	}
-	if v := os.Getenv("CODEGRAPH__DATABASE__SURREALDB__CONNECTION"); v != "" {
+	if v := os.Getenv("CODELOOM__DATABASE__SURREALDB__CONNECTION"); v != "" {
 		cfg.Database.SurrealDB.URL = v
 	}
-	if v := os.Getenv("CODEGRAPH_SURREALDB_NAMESPACE"); v != "" {
+	if v := os.Getenv("CODELOOM_SURREALDB_NAMESPACE"); v != "" {
 		cfg.Database.SurrealDB.Namespace = v
 	}
-	if v := os.Getenv("CODEGRAPH__DATABASE__SURREALDB__NAMESPACE"); v != "" {
+	if v := os.Getenv("CODELOOM__DATABASE__SURREALDB__NAMESPACE"); v != "" {
 		cfg.Database.SurrealDB.Namespace = v
 	}
-	if v := os.Getenv("CODEGRAPH_SURREALDB_DATABASE"); v != "" {
+	if v := os.Getenv("CODELOOM_SURREALDB_DATABASE"); v != "" {
 		cfg.Database.SurrealDB.Database = v
 	}
-	if v := os.Getenv("CODEGRAPH__DATABASE__SURREALDB__DATABASE"); v != "" {
+	if v := os.Getenv("CODELOOM__DATABASE__SURREALDB__DATABASE"); v != "" {
 		cfg.Database.SurrealDB.Database = v
 	}
-	if v := os.Getenv("CODEGRAPH_SURREALDB_USERNAME"); v != "" {
+	if v := os.Getenv("CODELOOM_SURREALDB_USERNAME"); v != "" {
 		cfg.Database.SurrealDB.Username = v
 	}
-	if v := os.Getenv("CODEGRAPH_SURREALDB_PASSWORD"); v != "" {
+	if v := os.Getenv("CODELOOM_SURREALDB_PASSWORD"); v != "" {
 		cfg.Database.SurrealDB.Password = v
 	}
 }

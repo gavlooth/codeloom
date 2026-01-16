@@ -240,3 +240,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, messages []Message, opts
 
 	return ch, nil
 }
+
+func (p *AnthropicProvider) Close() error {
+	return nil
+}

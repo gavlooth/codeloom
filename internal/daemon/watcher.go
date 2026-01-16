@@ -26,6 +26,7 @@ type Watcher struct {
 	mu              sync.Mutex
 	pendingFiles    map[string]time.Time
 	stopCh          chan struct{}
+	stopOnce        sync.Once
 }
 
 type WatcherConfig struct {
@@ -92,8 +93,10 @@ func (w *Watcher) Watch(ctx context.Context, dirs []string) error {
 }
 
 func (w *Watcher) Stop() {
-	close(w.stopCh)
-	w.watcher.Close()
+	w.stopOnce.Do(func() {
+		close(w.stopCh)
+		w.watcher.Close()
+	})
 }
 
 func (w *Watcher) addDirRecursive(dir string) error {
@@ -210,28 +213,32 @@ func (w *Watcher) indexFile(ctx context.Context, path string) error {
 
 	// Generate embeddings and store nodes
 	for _, node := range result.Nodes {
-		// Generate embedding for node content
+		// Generate embedding for node content (optional)
+		var emb []float32
 		if w.embedding != nil && node.Content != "" {
-			emb, err := w.embedding.EmbedSingle(ctx, node.Content)
+			emb, err = w.embedding.EmbedSingle(ctx, node.Content)
 			if err != nil {
 				log.Printf("Warning: embedding failed for %s: %v", node.ID, err)
-			} else {
-				// Convert to graph.CodeNode
-				graphNode := &graph.CodeNode{
-					ID:        node.ID,
-					Name:      node.Name,
-					NodeType:  graph.NodeType(node.NodeType),
-					Language:  string(node.Language),
-					FilePath:  node.FilePath,
-					StartLine: node.StartLine,
-					EndLine:   node.EndLine,
-					Content:   node.Content,
-					Embedding: emb,
-				}
-				if err := w.storage.UpsertNode(ctx, graphNode); err != nil {
-					log.Printf("Warning: failed to store node %s: %v", node.ID, err)
-				}
+				emb = nil // Continue without embedding
 			}
+		}
+
+		// Convert to graph.CodeNode and store (always, even without embedding)
+		graphNode := &graph.CodeNode{
+			ID:          node.ID,
+			Name:        node.Name,
+			NodeType:    graph.NodeType(node.NodeType),
+			Language:    string(node.Language),
+			FilePath:    node.FilePath,
+			StartLine:   node.StartLine,
+			EndLine:     node.EndLine,
+			Content:     node.Content,
+			DocComment:  node.DocComment,
+			Annotations: node.Annotations,
+			Embedding:   emb,
+		}
+		if err := w.storage.UpsertNode(ctx, graphNode); err != nil {
+			log.Printf("Warning: failed to store node %s: %v", node.ID, err)
 		}
 	}
 
@@ -253,7 +260,10 @@ func (w *Watcher) indexFile(ctx context.Context, path string) error {
 }
 
 func (w *Watcher) handleDelete(path string) {
-	ctx := context.Background()
+	// Use a timeout context to avoid blocking indefinitely
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	if err := w.storage.DeleteNodesByFile(ctx, path); err != nil {
 		log.Printf("Warning: failed to delete nodes for %s: %v", path, err)
 	} else {

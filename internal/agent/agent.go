@@ -80,6 +80,13 @@ func (a *Agent) Execute(ctx context.Context, query string) (*AgentOutput, error)
 	}
 
 	for i := 0; i < a.maxIter; i++ {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
 		output.StepsTaken = i + 1
 
 		// Get LLM response with tools

@@ -110,7 +110,10 @@ func (p *OpenAIProvider) GenerateWithTools(ctx context.Context, messages []Messa
 
 	openaiTools := make([]openai.Tool, len(tools))
 	for i, t := range tools {
-		paramsJSON, _ := json.Marshal(t.Parameters)
+		paramsJSON, err := json.Marshal(t.Parameters)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal tool parameters for %s: %w", t.Name, err)
+		}
 		openaiTools[i] = openai.Tool{
 			Type: openai.ToolTypeFunction,
 			Function: &openai.FunctionDefinition{
@@ -205,4 +208,8 @@ func (p *OpenAIProvider) Stream(ctx context.Context, messages []Message, opts ..
 	}()
 
 	return ch, nil
+}
+
+func (p *OpenAIProvider) Close() error {
+	return nil
 }

@@ -79,9 +79,15 @@ func (p *OpenAIProvider) Embed(ctx context.Context, texts []string) ([][]float32
 		return nil, fmt.Errorf("openai embedding error: %w", err)
 	}
 
+	if len(resp.Data) != len(texts) {
+		return nil, fmt.Errorf("expected %d embeddings, got %d", len(texts), len(resp.Data))
+	}
+
+	// Use Index field from response to ensure correct ordering
+	// OpenAI API does not guarantee response order matches input order
 	embeddings := make([][]float32, len(resp.Data))
-	for i, data := range resp.Data {
-		embeddings[i] = data.Embedding
+	for _, data := range resp.Data {
+		embeddings[data.Index] = data.Embedding
 	}
 
 	return embeddings, nil

@@ -41,3 +41,7 @@ func (p *XAIProvider) GenerateWithTools(ctx context.Context, messages []Message,
 func (p *XAIProvider) Stream(ctx context.Context, messages []Message, opts ...Option) (<-chan string, error) {
 	return p.OpenAIProvider.Stream(ctx, messages, opts...)
 }
+
+func (p *XAIProvider) Close() error {
+	return p.OpenAIProvider.Close()
+}

@@ -7,10 +7,15 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/heefoo/codeloom/internal/config"
+	"github.com/heefoo/codeloom/internal/embedding"
+	"github.com/heefoo/codeloom/internal/graph"
+	"github.com/heefoo/codeloom/internal/indexer"
 	"github.com/heefoo/codeloom/internal/llm"
+	"github.com/heefoo/codeloom/internal/parser"
 	"github.com/heefoo/codeloom/pkg/mcp"
 )
 
@@ -73,6 +78,7 @@ func main() {
 		LLM:    llmProvider,
 		Config: cfg,
 	})
+	defer server.Close()
 
 	// Setup graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -104,13 +110,121 @@ func main() {
 }
 
 func indexCmd(args []string) {
-	if len(args) == 0 {
-		fmt.Println("Usage: codeloom index <directory>")
+	// Parse index-specific flags
+	indexFlags := flag.NewFlagSet("index", flag.ExitOnError)
+	configPath := indexFlags.String("config", "", "Path to config file")
+	exclude := indexFlags.String("exclude", "", "Comma-separated patterns to exclude")
+	noEmbeddings := indexFlags.Bool("no-embeddings", false, "Skip embedding generation")
+	verbose := indexFlags.Bool("verbose", false, "Verbose output")
+
+	if err := indexFlags.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
 		os.Exit(1)
 	}
-	dir := args[0]
+
+	remaining := indexFlags.Args()
+	if len(remaining) == 0 {
+		fmt.Println("Usage: codeloom index [options] <directory>")
+		fmt.Println("\nOptions:")
+		indexFlags.PrintDefaults()
+		os.Exit(1)
+	}
+
+	dir := remaining[0]
 	fmt.Printf("Indexing directory: %s\n", dir)
-	// TODO: Implement indexing
+
+	// Load configuration
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Create parser
+	p := parser.NewParser()
+
+	// Create storage
+	storage, err := graph.NewStorage(graph.StorageConfig{
+		URL:       cfg.Database.SurrealDB.URL,
+		Namespace: cfg.Database.SurrealDB.Namespace,
+		Database:  cfg.Database.SurrealDB.Database,
+		Username:  cfg.Database.SurrealDB.Username,
+		Password:  cfg.Database.SurrealDB.Password,
+	})
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer storage.Close()
+
+	// Create embedding provider (optional)
+	var embProvider embedding.Provider
+	if !*noEmbeddings {
+		embProvider, err = embedding.NewProvider(cfg.Embedding)
+		if err != nil {
+			log.Printf("Warning: embedding provider not available: %v", err)
+			log.Println("Continuing without embeddings (semantic search will be limited)")
+		}
+	}
+
+	// Setup exclude patterns
+	excludePatterns := indexer.DefaultExcludePatterns()
+	if *exclude != "" {
+		excludePatterns = append(excludePatterns, strings.Split(*exclude, ",")...)
+	}
+
+	// Create indexer
+	idx := indexer.New(indexer.Config{
+		Parser:          p,
+		Storage:         storage,
+		Embedding:       embProvider,
+		ExcludePatterns: excludePatterns,
+	})
+
+	// Create context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle interrupt
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		fmt.Println("\nInterrupted, stopping indexing...")
+		cancel()
+	}()
+
+	// Progress callback
+	progressCb := func(status indexer.Status) {
+		if *verbose {
+			fmt.Printf("\rProgress: %d/%d nodes, %d edges",
+				status.NodesCreated, status.FilesTotal, status.EdgesCreated)
+		}
+	}
+
+	// Run indexing
+	startTime := cfg // reuse variable for timing
+	_ = startTime
+	fmt.Println("Starting indexing...")
+
+	if err := idx.IndexDirectory(ctx, dir, progressCb); err != nil {
+		log.Fatalf("Indexing failed: %v", err)
+	}
+
+	// Print final status
+	status := idx.GetStatus()
+	fmt.Printf("\n\nIndexing complete!\n")
+	fmt.Printf("  Directory: %s\n", status.Directory)
+	fmt.Printf("  Nodes created: %d\n", status.NodesCreated)
+	fmt.Printf("  Edges created: %d\n", status.EdgesCreated)
+	fmt.Printf("  Duration: %v\n", status.CompletedAt.Sub(status.StartedAt))
+
+	if len(status.Errors) > 0 {
+		fmt.Printf("  Warnings: %d\n", len(status.Errors))
+		if *verbose {
+			for _, e := range status.Errors {
+				fmt.Printf("    - %s\n", e)
+			}
+		}
+	}
 }
 
 func printHelp() {
@@ -118,21 +232,34 @@ func printHelp() {
 
 Commands:
   start <mode>   Start the MCP server (stdio or http)
-  index <dir>    Index a directory
+  index <dir>    Index a codebase directory into the code graph
   version        Show version
   help           Show this help
 
-Options:
+Index Options:
+  --config         Path to config file
+  --exclude        Comma-separated patterns to exclude (e.g., "test,mock")
+  --no-embeddings  Skip embedding generation (faster, but no semantic search)
+  --verbose        Show detailed progress
+
+Server Options:
   --config       Path to config file
   --port         HTTP server port (default: 3003)
   --watch        Watch for file changes
+
+Examples:
+  codeloom index ./src                     Index the src directory
+  codeloom index --verbose ./              Index current directory with progress
+  codeloom index --no-embeddings ./pkg     Index without embeddings (faster)
+  codeloom start stdio                     Start MCP server on stdin/stdout
+  codeloom start http --port 3003          Start MCP server on HTTP
 
 Environment Variables:
   CODELOOM_LLM_PROVIDER           LLM provider (openai, anthropic, ollama, etc.)
   CODELOOM_MODEL                  Model name
   CODELOOM_OPENAI_COMPATIBLE_URL  Base URL for OpenAI-compatible APIs
-  OPENAI_API_KEY                   API key for OpenAI-compatible providers
-  ANTHROPIC_API_KEY                API key for Anthropic
+  OPENAI_API_KEY                  API key for OpenAI-compatible providers
+  ANTHROPIC_API_KEY               API key for Anthropic
   CODELOOM_SURREALDB_URL          SurrealDB connection URL
 `)
 }

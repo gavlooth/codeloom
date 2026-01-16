@@ -1416,7 +1416,8 @@ func (p *Parser) ParseDirectory(ctx context.Context, dir string, excludePatterns
 		// Parse file
 		fileResult, err := p.ParseFile(ctx, path)
 		if err != nil {
-			// Log but continue
+			// Log error but continue with other files
+			fmt.Fprintf(os.Stderr, "Warning: failed to parse %s: %v\n", path, err)
 			return nil
 		}
 
