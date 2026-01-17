@@ -251,14 +251,10 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 	}
 
 	// Clean up deleted files using atomic operations
+	// UpdateFileAtomic now deletes nodes, edges, and metadata atomically
 	for _, path := range deletedFiles {
-		// Use UpdateFileAtomic with empty nodes/edges to delete atomically
 		if err := idx.storage.UpdateFileAtomic(ctx, path, []*graph.CodeNode{}, []*graph.CodeEdge{}); err != nil {
 			log.Printf("Warning: failed to delete file %s atomically: %v", path, err)
-			continue
-		}
-		if err := idx.storage.DeleteFileMetadata(ctx, path); err != nil {
-			log.Printf("Warning: failed to delete metadata for %s: %v", path, err)
 		}
 	}
 

@@ -1063,6 +1063,7 @@ func (s *Storage) UpdateFileAtomic(ctx context.Context, filePath string, nodes [
 		query := `BEGIN TRANSACTION;
 		           DELETE FROM edges WHERE from_id IN (SELECT id FROM nodes WHERE file_path = $path) OR to_id IN (SELECT id FROM nodes WHERE file_path = $path);
 		           DELETE FROM nodes WHERE file_path = $path;
+		           DELETE FROM file_metadata WHERE file_path = $path;
 		           COMMIT TRANSACTION;`
 		_, err := surrealdb.Query[any](ctx, s.db, query, map[string]any{
 			"path": filePath,
@@ -1102,6 +1103,10 @@ func (s *Storage) UpdateFileAtomic(ctx context.Context, filePath string, nodes [
 	// Part 2: Delete old nodes for this file
 	transactionParts = append(transactionParts,
 		`DELETE FROM nodes WHERE file_path = $filePath;`)
+
+	// Part 2.5: Delete old metadata for this file
+	transactionParts = append(transactionParts,
+		`DELETE FROM file_metadata WHERE file_path = $filePath;`)
 
 	// Prepare data outside the transaction to avoid variable scope issues
 	var nodeData []map[string]any
