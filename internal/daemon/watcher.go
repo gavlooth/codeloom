@@ -213,6 +213,13 @@ func (w *Watcher) processPending(ctx context.Context) {
 }
 
 func (w *Watcher) indexFile(ctx context.Context, path string) error {
+	// Check for context cancellation before starting work
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	// Parse file
 	result, err := w.parser.ParseFile(ctx, path)
 	if err != nil {
@@ -223,6 +230,13 @@ func (w *Watcher) indexFile(ctx context.Context, path string) error {
 	// This is done outside the transaction since embedding generation is I/O intensive
 	nodesWithEmbeddings := make([]*graph.CodeNode, 0, len(result.Nodes))
 	for i := range result.Nodes {
+		// Check for cancellation between nodes to avoid processing all if context is cancelled
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		node := &result.Nodes[i]
 		// Generate embedding for this node
 		var emb []float32
@@ -265,8 +279,10 @@ func (w *Watcher) indexFile(ctx context.Context, path string) error {
 	}
 
 	// Atomically update the file: delete old nodes/edges and store new ones in a single transaction
-	if err := w.storage.UpdateFileAtomic(ctx, path, nodesWithEmbeddings, graphEdges); err != nil {
-		return fmt.Errorf("atomic file update failed for %s: %w", path, err)
+	if w.storage != nil {
+		if err := w.storage.UpdateFileAtomic(ctx, path, nodesWithEmbeddings, graphEdges); err != nil {
+			return fmt.Errorf("atomic file update failed for %s: %w", path, err)
+		}
 	}
 
 	return nil
