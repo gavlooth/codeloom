@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strings"
@@ -49,18 +50,29 @@ func (s *Storage) lockFile(filePath string) {
 // unlockFile releases a lock for the given file path
 func (s *Storage) unlockFile(filePath string) {
 	s.fileLocksMu.Lock()
-	defer s.fileLocksMu.Unlock()
 
 	fl, exists := s.fileLocks[filePath]
 	if !exists {
+		s.fileLocksMu.Unlock()
 		return
 	}
 
-	fl.mu.Unlock()
+	// Decrement count while holding the map lock
 	fl.count--
+
+	// Only delete from map if count reaches zero
+	// This ensures any goroutine that acquired the lock can still unlock it later
 	if fl.count == 0 {
 		delete(s.fileLocks, filePath)
 	}
+
+	// Release the map lock before unlocking the file lock
+	// This maintains lock hierarchy (fileLocksMu before fl.mu) and prevents deadlock
+	s.fileLocksMu.Unlock()
+
+	// Now unlock the file's mutex
+	// This is safe because we've already decremented the count and updated the map
+	fl.mu.Unlock()
 }
 
 type StorageConfig struct {
@@ -840,8 +852,25 @@ func (s *Storage) RunMigrations(ctx context.Context) error {
 
 	for _, m := range migrations {
 		if _, err := surrealdb.Query[any](ctx, s.db, m, nil); err != nil {
-			// Log migration errors for debugging, but continue
-			// This handles "already exists" errors gracefully
+			// Check if this is an "already exists" error, which is benign
+			// Use lowercase matching for case-insensitivity across different SurrealDB versions
+			errStr := strings.ToLower(err.Error())
+			isAlreadyExists := strings.Contains(errStr, "already defined") ||
+				strings.Contains(errStr, "already exists") ||
+				strings.Contains(errStr, "duplicate index") ||
+				strings.Contains(errStr, "duplicate field") ||
+				(strings.Contains(errStr, "table name") && strings.Contains(errStr, "already exists"))
+
+			if isAlreadyExists {
+				// Benign error - table/index already exists, skip silently
+				continue
+			}
+
+			// Real error that should be surfaced
+			// Log as warning to make it visible without breaking startup
+			// This helps diagnose configuration issues, permission problems, etc.
+			log.Printf("Warning: migration failed for query '%s': %v\n"+
+				"This may indicate a database configuration issue. Continuing anyway.", m, err)
 			continue
 		}
 	}

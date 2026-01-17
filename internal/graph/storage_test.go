@@ -2,7 +2,9 @@ package graph
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 )
 
 // TestUpdateFileAtomicEmpty tests that UpdateFileAtomic handles empty nodes/edges atomically
@@ -95,4 +97,129 @@ func TestUpdateFileAtomicEmpty(t *testing.T) {
 			t.Errorf("found orphaned edge: %+v", edge)
 		}
 	}
+}
+
+// TestFileLockingConcurrency verifies that the file locking mechanism works correctly
+// under concurrent access and doesn't cause race conditions or deadlocks
+func TestFileLockingConcurrency(t *testing.T) {
+	storage := &Storage{}
+
+	// Test multiple concurrent lock/unlock operations on the same file
+	filePath := "/test/concurrent.go"
+	numGoroutines := 100
+	operationsPerGoroutine := 10
+
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	// Launch multiple goroutines that lock/unlock the same file
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+
+			for j := 0; j < operationsPerGoroutine; j++ {
+				storage.lockFile(filePath)
+				// Simulate some work while holding the lock
+				time.Sleep(1 * time.Microsecond)
+				storage.unlockFile(filePath)
+			}
+		}(i)
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+
+	// Verify that all locks were properly released by checking the fileLocks map
+	// After all operations, the entry should be deleted (count should be 0)
+	storage.fileLocksMu.Lock()
+	defer storage.fileLocksMu.Unlock()
+
+	if fl, exists := storage.fileLocks[filePath]; exists {
+		t.Errorf("file lock still exists after all operations: count=%d", fl.count)
+	}
+
+	t.Logf("Successfully completed %d concurrent lock/unlock operations on %s",
+		numGoroutines*operationsPerGoroutine, filePath)
+}
+
+// TestFileLockingMultipleFiles verifies that file locking works correctly
+// when locking/unlocking multiple different files concurrently
+func TestFileLockingMultipleFiles(t *testing.T) {
+	storage := &Storage{}
+
+	numFiles := 10
+	numGoroutines := 50
+	var filePaths []string
+	for i := 0; i < numFiles; i++ {
+		filePaths = append(filePaths, t.TempDir()+"/file"+string(rune('0'+i))+".go")
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	// Each goroutine picks a random file and locks/unlocks it
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+
+			// Lock/unlock each file once
+			for _, filePath := range filePaths {
+				storage.lockFile(filePath)
+				time.Sleep(1 * time.Microsecond)
+				storage.unlockFile(filePath)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify all locks were properly released
+	storage.fileLocksMu.Lock()
+	defer storage.fileLocksMu.Unlock()
+
+	if len(storage.fileLocks) != 0 {
+		t.Errorf("expected all file locks to be released, but %d entries remain: %v",
+			len(storage.fileLocks), storage.fileLocks)
+	}
+
+	t.Logf("Successfully completed concurrent locking of %d files", numFiles*numGoroutines)
+}
+
+// TestFileLockingRaceCondition specifically tests the race condition scenario
+// that was fixed: unlocking a file while another goroutine tries to lock it
+func TestFileLockingRaceCondition(t *testing.T) {
+	storage := &Storage{}
+
+	filePath := "/test/race.go"
+
+	// Goroutine 1: Lock and hold the file
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		storage.lockFile(filePath)
+		time.Sleep(10 * time.Millisecond) // Hold lock for a bit
+		storage.unlockFile(filePath)
+	}()
+
+	// Goroutine 2: Try to lock the same file while it's being unlocked
+	go func() {
+		defer wg.Done()
+		time.Sleep(5 * time.Millisecond) // Wait slightly for goroutine 1 to hold lock
+		storage.lockFile(filePath)
+		storage.unlockFile(filePath)
+	}()
+
+	wg.Wait()
+
+	// Verify no orphaned locks remain
+	storage.fileLocksMu.Lock()
+	defer storage.fileLocksMu.Unlock()
+
+	if fl, exists := storage.fileLocks[filePath]; exists {
+		t.Errorf("race condition test failed: file lock still exists with count=%d", fl.count)
+	}
+
+	t.Log("Race condition test passed: no orphaned locks detected")
 }
