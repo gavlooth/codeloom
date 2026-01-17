@@ -6,3 +6,4 @@ debug_parse
 test_annotations
 test_grammars
 *.exe
+*.test

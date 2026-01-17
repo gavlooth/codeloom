@@ -440,7 +440,7 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 	for i := range result.Edges {
 		edge := &result.Edges[i]
 		graphEdge := &graph.CodeEdge{
-			ID:       fmt.Sprintf("%s->%s", edge.FromID, edge.ToID),
+			ID:       fmt.Sprintf("%s->%s:%s", edge.FromID, edge.ToID, edge.EdgeType),
 			FromID:   edge.FromID,
 			ToID:     edge.ToID,
 			EdgeType: graph.EdgeType(edge.EdgeType),
