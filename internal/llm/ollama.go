@@ -30,8 +30,8 @@ type ollamaChatRequest struct {
 }
 
 type ollamaMessage struct {
-	Role      string        `json:"role"`
-	Content   string        `json:"content"`
+	Role      string           `json:"role"`
+	Content   string           `json:"content"`
 	ToolCalls []ollamaToolCall `json:"tool_calls,omitempty"`
 }
 
@@ -61,10 +61,10 @@ type ollamaToolCallFunction struct {
 }
 
 type ollamaChatResponse struct {
-	Model     string        `json:"model"`
-	Message   ollamaMessage `json:"message"`
-	Done      bool          `json:"done"`
-	DoneReason string       `json:"done_reason,omitempty"`
+	Model      string        `json:"model"`
+	Message    ollamaMessage `json:"message"`
+	Done       bool          `json:"done"`
+	DoneReason string        `json:"done_reason,omitempty"`
 }
 
 func NewOllamaProvider(cfg config.LLMConfig) (*OllamaProvider, error) {
@@ -268,7 +268,7 @@ func (p *OllamaProvider) Stream(ctx context.Context, messages []Message, opts ..
 		return nil, fmt.Errorf("ollama error: %s - %s", resp.Status, string(body))
 	}
 
-	ch := make(chan string)
+	ch := make(chan string, 100)
 	go func() {
 		defer close(ch)
 		defer resp.Body.Close()

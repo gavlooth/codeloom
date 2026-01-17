@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/heefoo/codeloom/internal/parser/grammars/clojure_lang"
+	"github.com/heefoo/codeloom/internal/parser/grammars/commonlisp_lang"
+	"github.com/heefoo/codeloom/internal/parser/grammars/julia_lang"
 	sitter "github.com/smacker/go-tree-sitter"
 	"github.com/smacker/go-tree-sitter/c"
 	"github.com/smacker/go-tree-sitter/cpp"
@@ -18,9 +21,6 @@ import (
 	"github.com/smacker/go-tree-sitter/python"
 	"github.com/smacker/go-tree-sitter/rust"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
-	"github.com/heefoo/codeloom/internal/parser/grammars/clojure_lang"
-	"github.com/heefoo/codeloom/internal/parser/grammars/commonlisp_lang"
-	"github.com/heefoo/codeloom/internal/parser/grammars/julia_lang"
 )
 
 type Language string
@@ -51,6 +51,8 @@ const (
 	NodeTypeVariable  NodeType = "variable"
 	NodeTypeImport    NodeType = "import"
 	NodeTypeType      NodeType = "type"
+	NodeTypeMacro     NodeType = "macro"
+	NodeTypeModule    NodeType = "module"
 )
 
 type EdgeType string
@@ -86,18 +88,43 @@ type CodeEdge struct {
 }
 
 type ParseResult struct {
-	Nodes []CodeNode
-	Edges []CodeEdge
+	Nodes      []CodeNode
+	Edges      []CodeEdge
+	FilesTotal int // Total files found (supported languages)
 }
 
 type Parser struct {
-	languages map[Language]*sitter.Language
-	mu        sync.RWMutex
+	languages         map[Language]*sitter.Language
+	mu                sync.RWMutex
+	enableSymbolTable bool // Opt-in for Go, Clojure, C symbol resolution
+	extractEdges      bool // Enable edge extraction
 }
 
-func NewParser() *Parser {
+// ParserOption configures the parser
+type ParserOption func(*Parser)
+
+// WithSymbolTable enables symbol table-based resolution for Go, Clojure, C
+func WithSymbolTable() ParserOption {
+	return func(p *Parser) {
+		p.enableSymbolTable = true
+	}
+}
+
+// WithEdgeExtraction enables call graph edge extraction
+func WithEdgeExtraction() ParserOption {
+	return func(p *Parser) {
+		p.extractEdges = true
+	}
+}
+
+func NewParser(opts ...ParserOption) *Parser {
 	p := &Parser{
-		languages: make(map[Language]*sitter.Language),
+		languages:    make(map[Language]*sitter.Language),
+		extractEdges: true, // Enable by default
+	}
+
+	for _, opt := range opts {
+		opt(p)
 	}
 
 	// Register built-in languages
@@ -154,6 +181,11 @@ func (p *Parser) DetectLanguage(filename string) Language {
 	}
 }
 
+// IsSupportedFile returns true if the file extension is supported
+func (p *Parser) IsSupportedFile(filePath string) bool {
+	return p.DetectLanguage(filePath) != ""
+}
+
 func (p *Parser) ParseFile(ctx context.Context, filePath string) (*ParseResult, error) {
 	lang := p.DetectLanguage(filePath)
 	if lang == "" {
@@ -176,6 +208,7 @@ func (p *Parser) ParseContent(ctx context.Context, filePath string, lang Languag
 
 	parser := sitter.NewParser()
 	parser.SetLanguage(language)
+	defer parser.Close()
 
 	tree, err := parser.ParseCtx(ctx, nil, content)
 	if err != nil {
@@ -192,7 +225,129 @@ func (p *Parser) ParseContent(ctx context.Context, filePath string, lang Languag
 	rootNode := tree.RootNode()
 	p.extractNodes(rootNode, filePath, lang, content, result)
 
+	// Extract edges if enabled
+	if p.extractEdges {
+		p.extractEdgesForFile(rootNode, filePath, lang, content, result)
+	}
+
 	return result, nil
+}
+
+// lineRange represents a line range for a function
+type lineRange struct {
+	start int
+	end   int
+	id    string
+}
+
+// extractEdgesForFile extracts call edges from the AST
+func (p *Parser) extractEdgesForFile(root *sitter.Node, filePath string, lang Language, content []byte, result *ParseResult) {
+	// Build a sorted list of function line ranges for O(log n) lookup
+	var funcRanges []lineRange
+	for _, node := range result.Nodes {
+		if node.NodeType == NodeTypeFunction || node.NodeType == NodeTypeMethod {
+			funcRanges = append(funcRanges, lineRange{
+				start: node.StartLine,
+				end:   node.EndLine,
+				id:    node.ID,
+			})
+		}
+	}
+
+	// Create appropriate extractor based on language and symbol table setting
+	var symbolTable SymbolTable
+
+	if p.enableSymbolTable {
+		switch lang {
+		case LangGo:
+			goSymTable := NewGoSymbolTable()
+			goSymTable.BuildFromAST(root, filePath, content)
+			symbolTable = goSymTable
+		case LangClojure:
+			cljSymTable := NewClojureSymbolTable()
+			cljSymTable.BuildFromAST(root, filePath, content)
+			symbolTable = cljSymTable
+		case LangC, LangCPP:
+			cSymTable := NewCSymbolTable()
+			cSymTable.BuildFromAST(root, filePath, content)
+			symbolTable = cSymTable
+		}
+	}
+
+	// Single-pass edge extraction with function context lookup
+	if lang == LangClojure {
+		var cljSymTable *ClojureSymbolTable
+		if symbolTable != nil {
+			cljSymTable = symbolTable.(*ClojureSymbolTable)
+		}
+		extractor := NewClojureEdgeExtractor(cljSymTable)
+		p.extractEdgesSinglePass(root, filePath, content, result, funcRanges, extractor)
+		return
+	}
+
+	if lang == LangC || lang == LangCPP {
+		var cSymTable *CSymbolTable
+		if symbolTable != nil {
+			cSymTable = symbolTable.(*CSymbolTable)
+		}
+		extractor := NewCEdgeExtractor(cSymTable)
+		p.extractEdgesSinglePass(root, filePath, content, result, funcRanges, extractor)
+		return
+	}
+
+	// Generic extractor
+	extractor := NewEdgeExtractor(symbolTable)
+	p.extractEdgesSinglePass(root, filePath, content, result, funcRanges, extractor)
+}
+
+// edgeExtractorInterface defines the interface for edge extractors
+type edgeExtractorInterface interface {
+	ExtractEdges(node *sitter.Node, callerID string, filePath string, content []byte, result *ParseResult)
+}
+
+// extractEdgesSinglePass walks the AST once, extracting edges with function context
+func (p *Parser) extractEdgesSinglePass(node *sitter.Node, filePath string, content []byte, result *ParseResult, funcRanges []lineRange, extractor edgeExtractorInterface) {
+	if node == nil {
+		return
+	}
+
+	line := int(node.StartPoint().Row) + 1
+
+	// Find which function contains this line
+	callerID := ""
+	for _, fr := range funcRanges {
+		if line >= fr.start && line <= fr.end {
+			callerID = fr.id
+			break
+		}
+	}
+
+	// Check for call expressions and delegate to extractor
+	nodeType := node.Type()
+	switch nodeType {
+	case "call_expression", "method_invocation", "invocation_expression":
+		if callerID != "" {
+			// Create a minimal result to collect edges from this call
+			tempResult := &ParseResult{Edges: []CodeEdge{}}
+			extractor.ExtractEdges(node, callerID, filePath, content, tempResult)
+			result.Edges = append(result.Edges, tempResult.Edges...)
+			// Don't recurse into children - extractor already handled it
+			return
+		}
+	case "list_lit":
+		// Clojure function calls - let the Clojure extractor handle
+		if callerID != "" {
+			tempResult := &ParseResult{Edges: []CodeEdge{}}
+			extractor.ExtractEdges(node, callerID, filePath, content, tempResult)
+			result.Edges = append(result.Edges, tempResult.Edges...)
+			return
+		}
+	}
+
+	// Recurse into children
+	for i := 0; i < int(node.ChildCount()); i++ {
+		p.extractEdgesSinglePass(node.Child(i), filePath, content, result, funcRanges, extractor)
+	}
 }
 
 func (p *Parser) extractNodes(node *sitter.Node, filePath string, lang Language, content []byte, result *ParseResult) {
@@ -1384,11 +1539,32 @@ func (p *Parser) extractFunctionName(node *sitter.Node, content []byte) string {
 	return ""
 }
 
+// shouldExclude checks if a path should be excluded based on patterns
+// Matches against directory name and also checks if any path component matches
+func shouldExclude(path string, name string, excludePatterns []string) bool {
+	for _, pattern := range excludePatterns {
+		// Direct match against directory/file name
+		if matched, _ := filepath.Match(pattern, name); matched {
+			return true
+		}
+		// Also check if pattern appears as a path component
+		// This handles cases like "node_modules" appearing anywhere in the path
+		pathParts := strings.Split(filepath.ToSlash(path), "/")
+		for _, part := range pathParts {
+			if matched, _ := filepath.Match(pattern, part); matched {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ParseDirectory parses all supported files in a directory
 func (p *Parser) ParseDirectory(ctx context.Context, dir string, excludePatterns []string) (*ParseResult, error) {
 	result := &ParseResult{
-		Nodes: []CodeNode{},
-		Edges: []CodeEdge{},
+		Nodes:      []CodeNode{},
+		Edges:      []CodeEdge{},
+		FilesTotal: 0,
 	}
 
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -1398,12 +1574,15 @@ func (p *Parser) ParseDirectory(ctx context.Context, dir string, excludePatterns
 
 		// Skip directories
 		if d.IsDir() {
-			// Check exclude patterns
-			for _, pattern := range excludePatterns {
-				if matched, _ := filepath.Match(pattern, d.Name()); matched {
-					return filepath.SkipDir
-				}
+			// Check exclude patterns against directory name and path
+			if shouldExclude(path, d.Name(), excludePatterns) {
+				return filepath.SkipDir
 			}
+			return nil
+		}
+
+		// Check exclude patterns for files too (e.g., *.min.js)
+		if shouldExclude(path, d.Name(), excludePatterns) {
 			return nil
 		}
 
@@ -1412,6 +1591,9 @@ func (p *Parser) ParseDirectory(ctx context.Context, dir string, excludePatterns
 		if lang == "" {
 			return nil
 		}
+
+		// Count this as a file to parse
+		result.FilesTotal++
 
 		// Parse file
 		fileResult, err := p.ParseFile(ctx, path)

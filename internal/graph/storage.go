@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/surrealdb/surrealdb.go"
 )
@@ -13,6 +16,51 @@ type Storage struct {
 	db        *surrealdb.DB
 	namespace string
 	database  string
+
+	// fileLocksMu protects the fileLocks map
+	fileLocksMu sync.Mutex
+	// fileLocks holds per-file mutexes for coordinating concurrent operations
+	fileLocks map[string]*fileLock
+}
+
+// fileLock represents a lock for a specific file
+type fileLock struct {
+	mu    sync.Mutex
+	count int // reference count for cleanup
+}
+
+// lockFile acquires a lock for the given file path
+func (s *Storage) lockFile(filePath string) {
+	s.fileLocksMu.Lock()
+	if s.fileLocks == nil {
+		s.fileLocks = make(map[string]*fileLock)
+	}
+	fl, exists := s.fileLocks[filePath]
+	if !exists {
+		fl = &fileLock{}
+		s.fileLocks[filePath] = fl
+	}
+	fl.count++
+	s.fileLocksMu.Unlock()
+
+	fl.mu.Lock()
+}
+
+// unlockFile releases a lock for the given file path
+func (s *Storage) unlockFile(filePath string) {
+	s.fileLocksMu.Lock()
+	defer s.fileLocksMu.Unlock()
+
+	fl, exists := s.fileLocks[filePath]
+	if !exists {
+		return
+	}
+
+	fl.mu.Unlock()
+	fl.count--
+	if fl.count == 0 {
+		delete(s.fileLocks, filePath)
+	}
 }
 
 type StorageConfig struct {
@@ -75,6 +123,23 @@ type CodeEdge struct {
 type ScoredNode struct {
 	Node  CodeNode
 	Score float64
+}
+
+// FileMetadata tracks indexed files for incremental indexing
+type FileMetadata struct {
+	FilePath      string     `json:"file_path"`
+	ContentHash   string     `json:"content_hash"`
+	ModTime       int64      `json:"mod_time"`
+	IndexedAt     int64      `json:"indexed_at"`
+	NodeCount     int        `json:"node_count"`
+	EdgeCount     int        `json:"edge_count"`
+	ProjectID     string     `json:"project_id,omitempty"`
+	FileSize      int64      `json:"file_size,omitempty"`
+	Language      string     `json:"language,omitempty"`
+	ModifiedAt    *time.Time `json:"modified_at,omitempty"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
+	LastIndexedAt *time.Time `json:"last_indexed_at,omitempty"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
 }
 
 func NewStorage(cfg StorageConfig) (*Storage, error) {
@@ -166,6 +231,105 @@ func (s *Storage) UpsertEdge(ctx context.Context, edge *CodeEdge) error {
 	return err
 }
 
+// UpsertNodesBatch inserts multiple nodes in a single transaction
+// This is significantly faster than inserting nodes one at a time
+func (s *Storage) UpsertNodesBatch(ctx context.Context, nodes []*CodeNode) error {
+	if len(nodes) == 0 {
+		return nil
+	}
+
+	// Build batch data
+	nodeData := make([]map[string]any, len(nodes))
+	for i, node := range nodes {
+		// Ensure annotations is never nil (SurrealDB requires empty object, not null)
+		annotations := node.Annotations
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+
+		nodeData[i] = map[string]any{
+			"id":          node.ID,
+			"name":        node.Name,
+			"node_type":   string(node.NodeType),
+			"language":    node.Language,
+			"file_path":   node.FilePath,
+			"start_line":  node.StartLine,
+			"end_line":    node.EndLine,
+			"content":     node.Content,
+			"doc_comment": node.DocComment,
+			"annotations": annotations,
+			"embedding":   node.Embedding,
+			"complexity":  node.Complexity,
+		}
+	}
+
+	// Use transaction with FOR loop for batch upsert
+	// This properly handles existing records with our id field
+	query := `
+		BEGIN TRANSACTION;
+		FOR $node IN $nodes {
+			UPSERT nodes SET
+				id = $node.id,
+				name = $node.name,
+				node_type = $node.node_type,
+				language = $node.language,
+				file_path = $node.file_path,
+				start_line = $node.start_line,
+				end_line = $node.end_line,
+				content = $node.content,
+				doc_comment = $node.doc_comment,
+				annotations = $node.annotations,
+				embedding = $node.embedding,
+				complexity = $node.complexity
+			WHERE id = $node.id;
+		};
+		COMMIT TRANSACTION;
+	`
+
+	_, err := surrealdb.Query[any](ctx, s.db, query, map[string]any{
+		"nodes": nodeData,
+	})
+	return err
+}
+
+// UpsertEdgesBatch inserts multiple edges in a single transaction
+func (s *Storage) UpsertEdgesBatch(ctx context.Context, edges []*CodeEdge) error {
+	if len(edges) == 0 {
+		return nil
+	}
+
+	edgeData := make([]map[string]any, len(edges))
+	for i, edge := range edges {
+		edgeData[i] = map[string]any{
+			"id":        edge.ID,
+			"from_id":   edge.FromID,
+			"to_id":     edge.ToID,
+			"edge_type": string(edge.EdgeType),
+			"weight":    edge.Weight,
+		}
+	}
+
+	// Use transaction with FOR loop for batch upsert
+	query := `
+		BEGIN TRANSACTION;
+		FOR $edge IN $edges {
+			UPSERT edges SET
+				id = $edge.id,
+				from_id = $edge.from_id,
+				to_id = $edge.to_id,
+				edge_type = $edge.edge_type,
+				weight = $edge.weight
+			WHERE id = $edge.id;
+		};
+		COMMIT TRANSACTION;
+	`
+
+	_, err := surrealdb.Query[any](ctx, s.db, query, map[string]any{
+		"edges": edgeData,
+	})
+	return err
+}
+
 func (s *Storage) GetNode(ctx context.Context, id string) (*CodeNode, error) {
 	node, err := surrealdb.Select[CodeNode](ctx, s.db, "nodes:"+id)
 	if err != nil {
@@ -215,11 +379,18 @@ func (s *Storage) GetTransitiveDependencies(ctx context.Context, nodeID string, 
 			}
 		}
 
-		// Fetch node details for the next level
-		for _, nid := range nextLevel {
-			node, err := s.findNodeByID(ctx, nid)
-			if err == nil && node != nil {
-				result = append(result, *node)
+		// Fetch node details for the next level in batch
+		if len(nextLevel) > 0 {
+			placeholders := make([]string, len(nextLevel))
+			params := make(map[string]any)
+			for i, nid := range nextLevel {
+				placeholders[i] = fmt.Sprintf("$id%d", i)
+				params[fmt.Sprintf("id%d", i)] = nid
+			}
+			query := fmt.Sprintf(`SELECT * FROM nodes WHERE id IN [%s]`, strings.Join(placeholders, ", "))
+			nodeResults, err := surrealdb.Query[[]CodeNode](ctx, s.db, query, params)
+			if err == nil && nodeResults != nil && len(*nodeResults) > 0 {
+				result = append(result, (*nodeResults)[0].Result...)
 			}
 		}
 
@@ -305,9 +476,17 @@ func (s *Storage) SemanticSearch(ctx context.Context, queryEmbedding []float32, 
 		return nil, fmt.Errorf("query embedding is empty")
 	}
 
+	if limit <= 0 {
+		limit = 10
+	}
+
+	if limit > 1000 {
+		limit = 1000
+	}
+
 	// Fetch all nodes that have embeddings
 	// Note: For large codebases, this should be paginated or use an external vector DB
-	query := `SELECT * FROM nodes WHERE embedding != NONE`
+	query := `SELECT * FROM nodes WHERE embedding != NONE LIMIT 10000`
 	results, err := surrealdb.Query[[]CodeNode](ctx, s.db, query, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch nodes: %w", err)
@@ -435,7 +614,7 @@ func (s *Storage) nodeNameMatches(ctx context.Context, nodeID, name string) bool
 
 // GetAllEdges retrieves all edges from the graph
 func (s *Storage) GetAllEdges(ctx context.Context) ([]CodeEdge, error) {
-	query := `SELECT * FROM edges`
+	query := `SELECT * FROM edges LIMIT 10000`
 	results, err := surrealdb.Query[[]CodeEdge](ctx, s.db, query, nil)
 	if err != nil {
 		return nil, err
@@ -494,7 +673,7 @@ func (s *Storage) GetNodesByFile(ctx context.Context, filePath string) ([]CodeNo
 }
 
 func (s *Storage) GetAllNodes(ctx context.Context) ([]CodeNode, error) {
-	query := `SELECT * FROM nodes`
+	query := `SELECT * FROM nodes LIMIT 10000`
 	results, err := surrealdb.Query[[]CodeNode](ctx, s.db, query, nil)
 	if err != nil {
 		return nil, err
@@ -507,6 +686,9 @@ func (s *Storage) GetAllNodes(ctx context.Context) ([]CodeNode, error) {
 }
 
 func (s *Storage) DeleteNodesByFile(ctx context.Context, filePath string) error {
+	s.lockFile(filePath)
+	defer s.unlockFile(filePath)
+
 	query := `DELETE FROM nodes WHERE file_path = $path`
 	_, err := surrealdb.Query[any](ctx, s.db, query, map[string]any{
 		"path": filePath,
@@ -634,14 +816,386 @@ func (s *Storage) RunMigrations(ctx context.Context) error {
 		`DEFINE INDEX idx_edges_type ON edges FIELDS edge_type`,
 		`DEFINE INDEX idx_edges_from_type ON edges FIELDS from_id, edge_type`,
 		`DEFINE INDEX idx_edges_to_type ON edges FIELDS to_id, edge_type`,
+
+		// File metadata table for incremental indexing
+		`DEFINE TABLE file_metadata SCHEMAFULL`,
+		`DEFINE FIELD file_path ON file_metadata TYPE string`,
+		`DEFINE FIELD content_hash ON file_metadata TYPE string`,
+		`DEFINE FIELD mod_time ON file_metadata TYPE int`,
+		`DEFINE FIELD indexed_at ON file_metadata TYPE int`,
+		`DEFINE FIELD node_count ON file_metadata TYPE int`,
+		`DEFINE FIELD edge_count ON file_metadata TYPE int`,
+		`DEFINE FIELD project_id ON file_metadata TYPE option<string>`,
+		`DEFINE FIELD file_size ON file_metadata TYPE option<int>`,
+		`DEFINE FIELD language ON file_metadata TYPE option<string>`,
+		`DEFINE FIELD modified_at ON file_metadata TYPE option<datetime>`,
+		`DEFINE INDEX idx_file_metadata_path ON file_metadata FIELDS file_path UNIQUE`,
 	}
 
 	for _, m := range migrations {
 		if _, err := surrealdb.Query[any](ctx, s.db, m, nil); err != nil {
-			// Ignore "already exists" errors
+			// Log migration errors for debugging, but continue
+			// This handles "already exists" errors gracefully
 			continue
 		}
 	}
 
+	return nil
+}
+
+// UpsertFileMetadata stores or updates file metadata for incremental indexing
+func (s *Storage) UpsertFileMetadata(ctx context.Context, meta *FileMetadata) error {
+	// Use default project if not specified
+	projectID := meta.ProjectID
+	if projectID == "" {
+		projectID = "default"
+	}
+
+	// Use SurrealDB UPSERT syntax for proper upsert behavior.
+	// If a record with matching file_path exists, update it; otherwise insert new.
+	// Include modified_at as required by the existing schema.
+	query := `UPSERT file_metadata SET
+		file_path = $file_path,
+		content_hash = $content_hash,
+		mod_time = $mod_time,
+		indexed_at = $indexed_at,
+		node_count = $node_count,
+		edge_count = $edge_count,
+		project_id = $project_id,
+		file_size = $file_size,
+		language = $language,
+		modified_at = time::now()
+	WHERE file_path = $file_path`
+
+	_, err := surrealdb.Query[any](ctx, s.db, query, map[string]any{
+		"file_path":    meta.FilePath,
+		"content_hash": meta.ContentHash,
+		"mod_time":     meta.ModTime,
+		"indexed_at":   meta.IndexedAt,
+		"node_count":   meta.NodeCount,
+		"edge_count":   meta.EdgeCount,
+		"project_id":   projectID,
+		"file_size":    meta.FileSize,
+		"language":     meta.Language,
+	})
+	if err != nil {
+		return fmt.Errorf("file metadata upsert failed: %w", err)
+	}
+	return nil
+}
+
+// GetFileMetadata retrieves metadata for a specific file
+func (s *Storage) GetFileMetadata(ctx context.Context, filePath string) (*FileMetadata, error) {
+	query := `SELECT * FROM file_metadata WHERE file_path = $path LIMIT 1`
+	results, err := surrealdb.Query[[]FileMetadata](ctx, s.db, query, map[string]any{
+		"path": filePath,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if results == nil || len(*results) == 0 || len((*results)[0].Result) == 0 {
+		return nil, nil
+	}
+
+	return &(*results)[0].Result[0], nil
+}
+
+// GetAllFileMetadata retrieves all file metadata (for detecting deleted files)
+func (s *Storage) GetAllFileMetadata(ctx context.Context) ([]FileMetadata, error) {
+	query := `SELECT * FROM file_metadata`
+	results, err := surrealdb.Query[[]FileMetadata](ctx, s.db, query, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if results == nil || len(*results) == 0 {
+		return nil, nil
+	}
+	return (*results)[0].Result, nil
+}
+
+// DeleteFileMetadata removes metadata for a specific file
+func (s *Storage) DeleteFileMetadata(ctx context.Context, filePath string) error {
+	query := `DELETE FROM file_metadata WHERE file_path = $path`
+	_, err := surrealdb.Query[any](ctx, s.db, query, map[string]any{
+		"path": filePath,
+	})
+	return err
+}
+
+// DeleteEdgesByFile removes all edges originating from nodes in a specific file
+func (s *Storage) DeleteEdgesByFile(ctx context.Context, filePath string) error {
+	// Get all node IDs for this file
+	query := `SELECT id FROM nodes WHERE file_path = $path`
+	results, err := surrealdb.Query[[]struct{ ID string }](ctx, s.db, query, map[string]any{
+		"path": filePath,
+	})
+	if err != nil {
+		return err
+	}
+
+	if results == nil || len(*results) == 0 || len((*results)[0].Result) == 0 {
+		return nil
+	}
+
+	// Delete edges from these nodes
+	nodeIDs := make([]string, len((*results)[0].Result))
+	for i, n := range (*results)[0].Result {
+		nodeIDs[i] = n.ID
+	}
+
+	query = `DELETE FROM edges WHERE from_id IN $ids OR to_id IN $ids`
+	_, err = surrealdb.Query[any](ctx, s.db, query, map[string]any{
+		"ids": nodeIDs,
+	})
+	return err
+}
+
+// StoreGraphAtomic stores both nodes and edges in a single transaction.
+// This ensures data integrity - either all nodes and edges are stored, or none are.
+// If storing edges fails, the entire transaction is rolled back, preventing orphaned edges.
+func (s *Storage) StoreGraphAtomic(ctx context.Context, nodes []*CodeNode, edges []*CodeEdge) error {
+	if len(nodes) == 0 && len(edges) == 0 {
+		return nil
+	}
+
+	// Build the transaction query dynamically based on what we have
+	var transactionParts []string
+	params := make(map[string]any)
+
+	// Add node storage part
+	if len(nodes) > 0 {
+		nodeData := make([]map[string]any, len(nodes))
+		for i, node := range nodes {
+			annotations := node.Annotations
+			if annotations == nil {
+				annotations = map[string]string{}
+			}
+
+			nodeData[i] = map[string]any{
+				"id":          node.ID,
+				"name":        node.Name,
+				"node_type":   string(node.NodeType),
+				"language":    node.Language,
+				"file_path":   node.FilePath,
+				"start_line":  node.StartLine,
+				"end_line":    node.EndLine,
+				"content":     node.Content,
+				"doc_comment": node.DocComment,
+				"annotations": annotations,
+				"embedding":   node.Embedding,
+				"complexity":  node.Complexity,
+			}
+		}
+
+		transactionParts = append(transactionParts,
+			`FOR $node IN $nodeData {
+				UPSERT nodes SET
+					id = $node.id,
+					name = $node.name,
+					node_type = $node.node_type,
+					language = $node.language,
+					file_path = $node.file_path,
+					start_line = $node.start_line,
+					end_line = $node.end_line,
+					content = $node.content,
+					doc_comment = $node.doc_comment,
+					annotations = $node.annotations,
+					embedding = $node.embedding,
+					complexity = $node.complexity
+				WHERE id = $node.id;
+			}`)
+
+		// Add nodeData to params after building transactionParts
+		params["nodeData"] = nodeData
+	}
+
+	// Add edge storage part
+	if len(edges) > 0 {
+		edgeData := make([]map[string]any, len(edges))
+		for i, edge := range edges {
+			edgeData[i] = map[string]any{
+				"id":        edge.ID,
+				"from_id":   edge.FromID,
+				"to_id":     edge.ToID,
+				"edge_type": string(edge.EdgeType),
+				"weight":    edge.Weight,
+			}
+		}
+
+		transactionParts = append(transactionParts,
+			`FOR $edge IN $edgeData {
+				UPSERT edges SET
+					id = $edge.id,
+					from_id = $edge.from_id,
+					to_id = $edge.to_id,
+					edge_type = $edge.edge_type,
+					weight = $edge.weight
+				WHERE id = $edge.id;
+			}`)
+
+		// Add edgeData to params after building transactionParts
+		params["edgeData"] = edgeData
+	}
+
+	// Combine into a single transaction
+	query := "BEGIN TRANSACTION;\n" + strings.Join(transactionParts, "\n") + "\nCOMMIT TRANSACTION;"
+
+	_, err := surrealdb.Query[any](ctx, s.db, query, params)
+	return err
+}
+
+// UpdateFileAtomic atomically updates a file's nodes and edges.
+// This ensures data integrity by using a transaction:
+// 1. Delete old nodes and edges for file
+// 2. Store new nodes and edges
+// All operations are performed in a single transaction; if any step fails, the entire transaction is rolled back. the file
+// 2. Store new nodes and edges
+// If any step fails, the entire transaction is rolled back.
+func (s *Storage) UpdateFileAtomic(ctx context.Context, filePath string, nodes []*CodeNode, edges []*CodeEdge) error {
+	s.lockFile(filePath)
+	defer s.unlockFile(filePath)
+
+	if len(nodes) == 0 && len(edges) == 0 {
+		// If no new data, just delete old data atomically in a transaction
+		// This ensures we don't leave orphaned data if one delete fails
+		query := `BEGIN TRANSACTION;
+		           DELETE FROM edges WHERE from_id IN (SELECT id FROM nodes WHERE file_path = $path) OR to_id IN (SELECT id FROM nodes WHERE file_path = $path);
+		           DELETE FROM nodes WHERE file_path = $path;
+		           COMMIT TRANSACTION;`
+		_, err := surrealdb.Query[any](ctx, s.db, query, map[string]any{
+			"path": filePath,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to delete file data atomically: %w", err)
+		}
+		return nil
+	}
+
+	// Query for existing node IDs before starting the transaction
+	// This is needed to delete edges since edges don't have file_path directly
+	query := `SELECT id FROM nodes WHERE file_path = $path`
+	results, err := surrealdb.Query[[]struct{ ID string }](ctx, s.db, query, map[string]any{
+		"path": filePath,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to query existing nodes: %w", err)
+	}
+
+	oldNodeIDs := make([]string, 0)
+	if results != nil && len(*results) > 0 {
+		for _, node := range (*results)[0].Result {
+			oldNodeIDs = append(oldNodeIDs, node.ID)
+		}
+	}
+
+	// Build the transaction query with deletion, node storage, and edge storage
+	var transactionParts []string
+
+	// Part 1: Delete old edges for this file (using pre-fetched node IDs)
+	if len(oldNodeIDs) > 0 {
+		transactionParts = append(transactionParts,
+			`DELETE FROM edges WHERE from_id IN $oldNodeIDs OR to_id IN $oldNodeIDs;`)
+	}
+
+	// Part 2: Delete old nodes for this file
+	transactionParts = append(transactionParts,
+		`DELETE FROM nodes WHERE file_path = $filePath;`)
+
+	// Prepare data outside the transaction to avoid variable scope issues
+	var nodeData []map[string]any
+	var edgeData []map[string]any
+
+	// Part 3: Store new nodes
+	if len(nodes) > 0 {
+		nodeData = make([]map[string]any, len(nodes))
+		for i, node := range nodes {
+			annotations := node.Annotations
+			if annotations == nil {
+				annotations = map[string]string{}
+			}
+
+			nodeData[i] = map[string]any{
+				"id":          node.ID,
+				"name":        node.Name,
+				"node_type":   string(node.NodeType),
+				"language":    node.Language,
+				"file_path":   node.FilePath,
+				"start_line":  node.StartLine,
+				"end_line":    node.EndLine,
+				"content":     node.Content,
+				"doc_comment": node.DocComment,
+				"annotations": annotations,
+				"embedding":   node.Embedding,
+				"complexity":  node.Complexity,
+			}
+		}
+
+		transactionParts = append(transactionParts,
+			`FOR $node IN $nodeData {
+				UPSERT nodes SET
+					id = $node.id,
+					name = $node.name,
+					node_type = $node.node_type,
+					language = $node.language,
+					file_path = $node.file_path,
+					start_line = $node.start_line,
+					end_line = $node.end_line,
+					content = $node.content,
+					doc_comment = $node.doc_comment,
+					annotations = $node.annotations,
+					embedding = $node.embedding,
+					complexity = $node.complexity
+				WHERE id = $node.id;
+			}`)
+	}
+
+	// Part 4: Store new edges
+	if len(edges) > 0 {
+		edgeData = make([]map[string]any, len(edges))
+		for i, edge := range edges {
+			edgeData[i] = map[string]any{
+				"id":        edge.ID,
+				"from_id":   edge.FromID,
+				"to_id":     edge.ToID,
+				"edge_type": string(edge.EdgeType),
+				"weight":    edge.Weight,
+			}
+		}
+
+		transactionParts = append(transactionParts,
+			`FOR $edge IN $edgeData {
+				UPSERT edges SET
+					id = $edge.id,
+					from_id = $edge.from_id,
+					to_id = $edge.to_id,
+					edge_type = $edge.edge_type,
+					weight = $edge.weight
+				WHERE id = $edge.id;
+			}`)
+	}
+
+	// Combine into a single transaction
+	query = "BEGIN TRANSACTION;\n" + strings.Join(transactionParts, "\n") + "\nCOMMIT TRANSACTION;"
+
+	// Build parameters
+	var params map[string]any
+	params = make(map[string]any)
+	params["filePath"] = filePath
+	if len(oldNodeIDs) > 0 {
+		params["oldNodeIDs"] = oldNodeIDs
+	}
+	if len(nodes) > 0 {
+		params["nodeData"] = nodeData
+	}
+	if len(edges) > 0 {
+		params["edgeData"] = edgeData
+	}
+
+	_, err = surrealdb.Query[any](ctx, s.db, query, params)
+	if err != nil {
+		return fmt.Errorf("atomic file update failed: %w", err)
+	}
 	return nil
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
 
 	"github.com/heefoo/codeloom/internal/agent"
 	"github.com/heefoo/codeloom/internal/embedding"
@@ -51,9 +53,19 @@ func (g *GraphTools) semanticSearchTool() agent.Tool {
 			"required": []string{"query"},
 		},
 		Execute: func(ctx context.Context, args map[string]interface{}) (string, error) {
-			query, _ := args["query"].(string)
+			query, ok := args["query"].(string)
+			if !ok {
+				return "", fmt.Errorf("query parameter must be a string")
+			}
+			if query = strings.TrimSpace(query); query == "" {
+				return "", fmt.Errorf("query parameter cannot be empty")
+			}
+
 			limit := 10
 			if l, ok := args["limit"].(float64); ok {
+				if l < 1 || l > 100 {
+					return "", fmt.Errorf("limit must be between 1 and 100, got %f", l)
+				}
 				limit = int(l)
 			}
 
@@ -75,7 +87,11 @@ func (g *GraphTools) semanticSearchTool() agent.Tool {
 				"results": formatNodes(nodes),
 			}
 
-			jsonBytes, _ := json.MarshalIndent(result, "", "  ")
+			jsonBytes, err := json.MarshalIndent(result, "", "  ")
+			if err != nil {
+				log.Printf("Warning: failed to marshal semantic search result: %v", err)
+				return "", fmt.Errorf("failed to marshal result: %w", err)
+			}
 			return string(jsonBytes), nil
 		},
 	}
@@ -100,9 +116,19 @@ func (g *GraphTools) getTransitiveDependenciesTool() agent.Tool {
 			"required": []string{"node_id"},
 		},
 		Execute: func(ctx context.Context, args map[string]interface{}) (string, error) {
-			nodeID, _ := args["node_id"].(string)
+			nodeID, ok := args["node_id"].(string)
+			if !ok {
+				return "", fmt.Errorf("node_id parameter must be a string")
+			}
+			if nodeID = strings.TrimSpace(nodeID); nodeID == "" {
+				return "", fmt.Errorf("node_id parameter cannot be empty")
+			}
+
 			depth := 3
 			if d, ok := args["depth"].(float64); ok {
+				if d < 1 || d > 10 {
+					return "", fmt.Errorf("depth must be between 1 and 10, got %f", d)
+				}
 				depth = int(d)
 			}
 
@@ -118,7 +144,11 @@ func (g *GraphTools) getTransitiveDependenciesTool() agent.Tool {
 				"dependencies": formatNodes(nodes),
 			}
 
-			jsonBytes, _ := json.MarshalIndent(result, "", "  ")
+			jsonBytes, err := json.MarshalIndent(result, "", "  ")
+			if err != nil {
+				log.Printf("Warning: failed to marshal dependencies result: %v", err)
+				return "", fmt.Errorf("failed to marshal result: %w", err)
+			}
 			return string(jsonBytes), nil
 		},
 	}
@@ -143,8 +173,21 @@ func (g *GraphTools) traceCallChainTool() agent.Tool {
 			"required": []string{"from", "to"},
 		},
 		Execute: func(ctx context.Context, args map[string]interface{}) (string, error) {
-			from, _ := args["from"].(string)
-			to, _ := args["to"].(string)
+			from, ok := args["from"].(string)
+			if !ok {
+				return "", fmt.Errorf("from parameter must be a string")
+			}
+			if from = strings.TrimSpace(from); from == "" {
+				return "", fmt.Errorf("from parameter cannot be empty")
+			}
+
+			to, ok := args["to"].(string)
+			if !ok {
+				return "", fmt.Errorf("to parameter must be a string")
+			}
+			if to = strings.TrimSpace(to); to == "" {
+				return "", fmt.Errorf("to parameter cannot be empty")
+			}
 
 			edges, err := g.storage.TraceCallChain(ctx, from, to)
 			if err != nil {
@@ -158,7 +201,11 @@ func (g *GraphTools) traceCallChainTool() agent.Tool {
 				"call_chain": formatEdges(edges),
 			}
 
-			jsonBytes, _ := json.MarshalIndent(result, "", "  ")
+			jsonBytes, err := json.MarshalIndent(result, "", "  ")
+			if err != nil {
+				log.Printf("Warning: failed to marshal trace result: %v", err)
+				return "", fmt.Errorf("failed to marshal result: %w", err)
+			}
 			return string(jsonBytes), nil
 		},
 	}
@@ -179,7 +226,13 @@ func (g *GraphTools) findByNameTool() agent.Tool {
 			"required": []string{"name"},
 		},
 		Execute: func(ctx context.Context, args map[string]interface{}) (string, error) {
-			name, _ := args["name"].(string)
+			name, ok := args["name"].(string)
+			if !ok {
+				return "", fmt.Errorf("name parameter must be a string")
+			}
+			if name = strings.TrimSpace(name); name == "" {
+				return "", fmt.Errorf("name parameter cannot be empty")
+			}
 
 			nodes, err := g.storage.FindByName(ctx, name)
 			if err != nil {
@@ -192,7 +245,11 @@ func (g *GraphTools) findByNameTool() agent.Tool {
 				"results": formatNodes(nodes),
 			}
 
-			jsonBytes, _ := json.MarshalIndent(result, "", "  ")
+			jsonBytes, err := json.MarshalIndent(result, "", "  ")
+			if err != nil {
+				log.Printf("Warning: failed to marshal find result: %v", err)
+				return "", fmt.Errorf("failed to marshal result: %w", err)
+			}
 			return string(jsonBytes), nil
 		},
 	}
@@ -213,7 +270,13 @@ func (g *GraphTools) getNodesByFileTool() agent.Tool {
 			"required": []string{"file_path"},
 		},
 		Execute: func(ctx context.Context, args map[string]interface{}) (string, error) {
-			filePath, _ := args["file_path"].(string)
+			filePath, ok := args["file_path"].(string)
+			if !ok {
+				return "", fmt.Errorf("file_path parameter must be a string")
+			}
+			if filePath = strings.TrimSpace(filePath); filePath == "" {
+				return "", fmt.Errorf("file_path parameter cannot be empty")
+			}
 
 			nodes, err := g.storage.GetNodesByFile(ctx, filePath)
 			if err != nil {
@@ -226,7 +289,11 @@ func (g *GraphTools) getNodesByFileTool() agent.Tool {
 				"nodes":     formatNodes(nodes),
 			}
 
-			jsonBytes, _ := json.MarshalIndent(result, "", "  ")
+			jsonBytes, err := json.MarshalIndent(result, "", "  ")
+			if err != nil {
+				log.Printf("Warning: failed to marshal file nodes result: %v", err)
+				return "", fmt.Errorf("failed to marshal result: %w", err)
+			}
 			return string(jsonBytes), nil
 		},
 	}

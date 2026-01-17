@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/google/generative-ai-go/genai"
 	"github.com/heefoo/codeloom/internal/config"
@@ -285,15 +286,25 @@ func (p *GoogleProvider) Stream(ctx context.Context, messages []Message, opts ..
 
 		iter := cs.SendMessageStream(ctx, genai.Text(lastUserMsg))
 		for {
-			resp, err := iter.Next()
-			if err != nil {
+			select {
+			case <-ctx.Done():
 				return
-			}
+			default:
+				resp, err := iter.Next()
+				if err != nil {
+					log.Printf("google stream error: %v", err)
+					return
+				}
 
-			for _, cand := range resp.Candidates {
-				for _, part := range cand.Content.Parts {
-					if text, ok := part.(genai.Text); ok {
-						ch <- string(text)
+				for _, cand := range resp.Candidates {
+					for _, part := range cand.Content.Parts {
+						if text, ok := part.(genai.Text); ok {
+							select {
+							case ch <- string(text):
+							case <-ctx.Done():
+								return
+							}
+						}
 					}
 				}
 			}

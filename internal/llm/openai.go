@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
+	"log"
 	"time"
 
 	"github.com/heefoo/codeloom/internal/config"
+	"github.com/heefoo/codeloom/internal/httpclient"
 	openai "github.com/sashabaranov/go-openai"
 )
 
@@ -28,12 +29,12 @@ func NewOpenAIProvider(cfg config.LLMConfig) (*OpenAIProvider, error) {
 		clientCfg.BaseURL = cfg.BaseURL
 	}
 
-	// Set timeout
-	if cfg.TimeoutSecs > 0 {
-		clientCfg.HTTPClient = &http.Client{
-			Timeout: time.Duration(cfg.TimeoutSecs) * time.Second,
-		}
+	// Set timeout with default to prevent hanging requests
+	timeout := time.Duration(cfg.TimeoutSecs) * time.Second
+	if timeout == 0 {
+		timeout = 120 * time.Second // Default 2 minute timeout
 	}
+	clientCfg.HTTPClient = httpclient.GetSharedClient(timeout)
 
 	client := openai.NewClientWithConfig(clientCfg)
 
@@ -188,21 +189,31 @@ func (p *OpenAIProvider) Stream(ctx context.Context, messages []Message, opts ..
 		return nil, fmt.Errorf("openai stream error: %w", err)
 	}
 
-	ch := make(chan string)
+	ch := make(chan string, 100)
 	go func() {
 		defer close(ch)
 		defer stream.Close()
 
 		for {
-			resp, err := stream.Recv()
-			if err == io.EOF {
+			select {
+			case <-ctx.Done():
 				return
-			}
-			if err != nil {
-				return
-			}
-			if len(resp.Choices) > 0 {
-				ch <- resp.Choices[0].Delta.Content
+			default:
+				resp, err := stream.Recv()
+				if err == io.EOF {
+					return
+				}
+				if err != nil {
+					log.Printf("openai stream error: %v", err)
+					return
+				}
+				if len(resp.Choices) > 0 {
+					select {
+					case ch <- resp.Choices[0].Delta.Content:
+					case <-ctx.Done():
+						return
+					}
+				}
 			}
 		}
 	}()

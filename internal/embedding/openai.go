@@ -3,10 +3,11 @@ package embedding
 import (
 	"context"
 	"fmt"
-	"net/http"
+	"strings"
 	"time"
 
 	"github.com/heefoo/codeloom/internal/config"
+	"github.com/heefoo/codeloom/internal/httpclient"
 	openai "github.com/sashabaranov/go-openai"
 )
 
@@ -23,9 +24,7 @@ func NewOpenAIProvider(cfg config.EmbeddingConfig) (*OpenAIProvider, error) {
 		clientCfg.BaseURL = cfg.BaseURL
 	}
 
-	clientCfg.HTTPClient = &http.Client{
-		Timeout: 60 * time.Second,
-	}
+	clientCfg.HTTPClient = httpclient.GetSharedClient(60 * time.Second)
 
 	client := openai.NewClientWithConfig(clientCfg)
 
@@ -55,6 +54,11 @@ func (p *OpenAIProvider) Dimension() int {
 }
 
 func (p *OpenAIProvider) EmbedSingle(ctx context.Context, text string) ([]float32, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, fmt.Errorf("cannot embed empty text")
+	}
+
 	resp, err := p.client.CreateEmbeddings(ctx, openai.EmbeddingRequest{
 		Input: []string{text},
 		Model: openai.EmbeddingModel(p.model),

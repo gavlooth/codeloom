@@ -489,12 +489,14 @@ func (s *Server) handleIndex(ctx context.Context, request mcp.CallToolRequest) (
 	// Update indexer exclude patterns if provided
 	if len(excludePatterns) > 0 {
 		allPatterns := append(indexer.DefaultExcludePatterns(), excludePatterns...)
+		s.mu.Lock()
 		s.indexer = indexer.New(indexer.Config{
 			Parser:          parser.NewParser(),
 			Storage:         s.storage,
 			Embedding:       s.embedding,
 			ExcludePatterns: allPatterns,
 		})
+		s.mu.Unlock()
 	}
 
 	// Run indexing with a reasonable timeout
@@ -548,10 +550,11 @@ func (s *Server) handleIndexStatus(ctx context.Context, request mcp.CallToolRequ
 	result := map[string]interface{}{
 		"state":         status.State,
 		"directory":     status.Directory,
+		"files_total":   status.FilesTotal,
+		"files_indexed": status.FilesIndexed,
+		"nodes_total":   status.NodesTotal,
 		"nodes_created": status.NodesCreated,
 		"edges_created": status.EdgesCreated,
-		"files_indexed": status.FilesIndexed,
-		"files_total":   status.FilesTotal,
 		"last_error":    status.LastError,
 	}
 

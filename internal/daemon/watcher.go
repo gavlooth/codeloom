@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -22,7 +23,7 @@ type Watcher struct {
 	storage         *graph.Storage
 	embedding       embedding.Provider
 	excludePatterns []string
-	debounceMs      int
+	debounceMs      atomic.Int64
 	mu              sync.Mutex
 	pendingFiles    map[string]time.Time
 	stopCh          chan struct{}
@@ -48,16 +49,17 @@ func NewWatcher(cfg WatcherConfig) (*Watcher, error) {
 		debounceMs = 100 // Default 100ms debounce
 	}
 
-	return &Watcher{
+	w := &Watcher{
 		watcher:         fsWatcher,
 		parser:          cfg.Parser,
 		storage:         cfg.Storage,
 		embedding:       cfg.Embedding,
 		excludePatterns: cfg.ExcludePatterns,
-		debounceMs:      debounceMs,
 		pendingFiles:    make(map[string]time.Time),
 		stopCh:          make(chan struct{}),
-	}, nil
+	}
+	w.debounceMs.Store(int64(debounceMs))
+	return w, nil
 }
 
 func (w *Watcher) Watch(ctx context.Context, dirs []string) error {
@@ -119,12 +121,19 @@ func (w *Watcher) addDirRecursive(dir string) error {
 func (w *Watcher) shouldExclude(path string) bool {
 	name := filepath.Base(path)
 	for _, pattern := range w.excludePatterns {
+		// Check if pattern matches the filename/base directory
 		if matched, _ := filepath.Match(pattern, name); matched {
 			return true
 		}
-		// Also check if pattern matches full path
-		if strings.Contains(path, strings.Trim(pattern, "*")) {
-			return true
+		// Check if pattern matches any path component
+		// Walk up the path to check each directory/file name
+		currentPath := path
+		for currentPath != "." && currentPath != "/" {
+			base := filepath.Base(currentPath)
+			if matched, _ := filepath.Match(pattern, base); matched {
+				return true
+			}
+			currentPath = filepath.Dir(currentPath)
 		}
 	}
 	return false
@@ -149,7 +158,7 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 	case event.Op&fsnotify.Remove == fsnotify.Remove,
 		event.Op&fsnotify.Rename == fsnotify.Rename:
 		// Handle deletion
-		go w.handleDelete(event.Name)
+		w.queueFile(event.Name + "|DELETE")
 	}
 }
 
@@ -160,7 +169,7 @@ func (w *Watcher) queueFile(path string) {
 }
 
 func (w *Watcher) processDebounced(ctx context.Context) {
-	ticker := time.NewTicker(time.Duration(w.debounceMs) * time.Millisecond)
+	ticker := time.NewTicker(time.Duration(w.debounceMs.Load()) * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
@@ -178,7 +187,7 @@ func (w *Watcher) processDebounced(ctx context.Context) {
 func (w *Watcher) processPending(ctx context.Context) {
 	w.mu.Lock()
 	now := time.Now()
-	debounceThreshold := time.Duration(w.debounceMs) * time.Millisecond
+	debounceThreshold := time.Duration(w.debounceMs.Load()) * time.Millisecond
 
 	var toProcess []string
 	for path, queuedAt := range w.pendingFiles {
@@ -191,10 +200,14 @@ func (w *Watcher) processPending(ctx context.Context) {
 
 	// Process files
 	for _, path := range toProcess {
-		if err := w.indexFile(ctx, path); err != nil {
-			log.Printf("Failed to index %s: %v", path, err)
+		if strings.HasSuffix(path, "|DELETE") {
+			w.handleDelete(strings.TrimSuffix(path, "|DELETE"))
 		} else {
-			log.Printf("Indexed: %s", path)
+			if err := w.indexFile(ctx, path); err != nil {
+				log.Printf("Failed to index %s: %v", path, err)
+			} else {
+				log.Printf("Indexed: %s", path)
+			}
 		}
 	}
 }
@@ -206,24 +219,21 @@ func (w *Watcher) indexFile(ctx context.Context, path string) error {
 		return err
 	}
 
-	// Delete existing nodes for this file
-	if err := w.storage.DeleteNodesByFile(ctx, path); err != nil {
-		log.Printf("Warning: failed to delete existing nodes: %v", err)
-	}
-
-	// Generate embeddings and store nodes
-	for _, node := range result.Nodes {
-		// Generate embedding for node content (optional)
+	// Generate embeddings for all nodes before the transaction
+	// This is done outside the transaction since embedding generation is I/O intensive
+	nodesWithEmbeddings := make([]*graph.CodeNode, 0, len(result.Nodes))
+	for i := range result.Nodes {
+		node := &result.Nodes[i]
+		// Generate embedding for this node
 		var emb []float32
+		var err error
 		if w.embedding != nil && node.Content != "" {
 			emb, err = w.embedding.EmbedSingle(ctx, node.Content)
 			if err != nil {
-				log.Printf("Warning: embedding failed for %s: %v", node.ID, err)
-				emb = nil // Continue without embedding
+				log.Printf("Warning: failed to generate embedding for %s: %v", node.Name, err)
+				// Continue without embedding rather than failing entirely
 			}
 		}
-
-		// Convert to graph.CodeNode and store (always, even without embedding)
 		graphNode := &graph.CodeNode{
 			ID:          node.ID,
 			Name:        node.Name,
@@ -237,13 +247,13 @@ func (w *Watcher) indexFile(ctx context.Context, path string) error {
 			Annotations: node.Annotations,
 			Embedding:   emb,
 		}
-		if err := w.storage.UpsertNode(ctx, graphNode); err != nil {
-			log.Printf("Warning: failed to store node %s: %v", node.ID, err)
-		}
+		nodesWithEmbeddings = append(nodesWithEmbeddings, graphNode)
 	}
 
-	// Store edges
-	for _, edge := range result.Edges {
+	// Convert parser edges to graph edges
+	graphEdges := make([]*graph.CodeEdge, 0, len(result.Edges))
+	for i := range result.Edges {
+		edge := &result.Edges[i]
 		graphEdge := &graph.CodeEdge{
 			ID:       fmt.Sprintf("%s->%s", edge.FromID, edge.ToID),
 			FromID:   edge.FromID,
@@ -251,9 +261,12 @@ func (w *Watcher) indexFile(ctx context.Context, path string) error {
 			EdgeType: graph.EdgeType(edge.EdgeType),
 			Weight:   1.0,
 		}
-		if err := w.storage.UpsertEdge(ctx, graphEdge); err != nil {
-			log.Printf("Warning: failed to store edge: %v", err)
-		}
+		graphEdges = append(graphEdges, graphEdge)
+	}
+
+	// Atomically update the file: delete old nodes/edges and store new ones in a single transaction
+	if err := w.storage.UpdateFileAtomic(ctx, path, nodesWithEmbeddings, graphEdges); err != nil {
+		return fmt.Errorf("atomic file update failed for %s: %w", path, err)
 	}
 
 	return nil
@@ -263,6 +276,11 @@ func (w *Watcher) handleDelete(path string) {
 	// Use a timeout context to avoid blocking indefinitely
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	if path == "" {
+		log.Printf("Warning: skipping delete with empty path")
+		return
+	}
 
 	if err := w.storage.DeleteNodesByFile(ctx, path); err != nil {
 		log.Printf("Warning: failed to delete nodes for %s: %v", path, err)

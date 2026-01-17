@@ -195,14 +195,12 @@ func indexCmd(args []string) {
 	// Progress callback
 	progressCb := func(status indexer.Status) {
 		if *verbose {
-			fmt.Printf("\rProgress: %d/%d nodes, %d edges",
-				status.NodesCreated, status.FilesTotal, status.EdgesCreated)
+			fmt.Printf("\rProgress: %d files, %d/%d nodes stored, %d edges",
+				status.FilesIndexed, status.NodesCreated, status.NodesTotal, status.EdgesCreated)
 		}
 	}
 
 	// Run indexing
-	startTime := cfg // reuse variable for timing
-	_ = startTime
 	fmt.Println("Starting indexing...")
 
 	if err := idx.IndexDirectory(ctx, dir, progressCb); err != nil {
@@ -213,7 +211,23 @@ func indexCmd(args []string) {
 	status := idx.GetStatus()
 	fmt.Printf("\n\nIndexing complete!\n")
 	fmt.Printf("  Directory: %s\n", status.Directory)
-	fmt.Printf("  Nodes created: %d\n", status.NodesCreated)
+
+	// Show incremental vs full index info
+	if status.Incremental {
+		fmt.Printf("  Mode: incremental\n")
+		fmt.Printf("  Files total: %d\n", status.FilesTotal)
+		fmt.Printf("  Files changed: %d\n", status.FilesIndexed)
+		fmt.Printf("  Files skipped (unchanged): %d\n", status.FilesSkipped)
+		if status.FilesDeleted > 0 {
+			fmt.Printf("  Files removed: %d\n", status.FilesDeleted)
+		}
+	} else {
+		fmt.Printf("  Mode: full index\n")
+		fmt.Printf("  Files indexed: %d\n", status.FilesIndexed)
+	}
+
+	fmt.Printf("  Code elements found: %d\n", status.NodesTotal)
+	fmt.Printf("  Nodes stored: %d\n", status.NodesCreated)
 	fmt.Printf("  Edges created: %d\n", status.EdgesCreated)
 	fmt.Printf("  Duration: %v\n", status.CompletedAt.Sub(status.StartedAt))
 

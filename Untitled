@@ -1,0 +1,24 @@
+tellaris initialized core.cljs:72:4
+ tellaris initialized core.cljs:72:4
+
+tellaris initialized core.cljs:72:4
+tellaris initialized core.cljs:72:4 n error occurred when calling (chatbot.core/init!) shadow.module.main.append.js:4:56
+    <anonymous> http://localhost:3000/js/cljs-runtime/shadow.module.main.append.js:4
+    globalEval http://localhost:3000/js/main.js:434
+    evalLoad http://localhost:3000/js/main.js:1405
+    <anonymous> http://localhost:3000/js/main.js:1607
+DOMException: Document.querySelectorAll: '[data-*]' is not a valid selector
+    stellaris$expression$precompile_all_BANG_ expression.cljs:795
+    stellaris$core$init_BANG_ core.cljs:74
+    chatbot$core$init_BANG_ core.cljs:96
+    <anonymous> shadow.module.main.append.js:4
+    globalEval main.js:434
+    evalLoad main.js:1405
+    <anonymous> main.js:1607
+shadow.module.main.append.js:4:126
+    <anonymous> http://localhost:3000/js/cljs-runtime/shadow.module.main.append.js:4
+    globalEval http://localhost:3000/js/main.js:434
+    evalLoad http://localhost:3000/js/main.js:1405
+    <anonymous> http://localhost:3000/js/main.js:1607
+shadow-cljs: #3 ready! browser.cljs:20:8
+uncaught exception: Unable to load image data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSI+CiAgICAgICAgICAgICAgPGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiPjwvY2lyY2xlPgogICAgICAgICAgICAgIDxwYXRoIGQ9Ik0xMCAxNkwxNCAyMEwyMiAxMiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48L3BhdGg+CiAgICAgICAgICAgIDwvc3ZnPg== 

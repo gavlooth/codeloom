@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/heefoo/codeloom/internal/config"
+	"github.com/heefoo/codeloom/internal/httpclient"
 )
 
 type OllamaProvider struct {
@@ -43,9 +46,7 @@ func NewOllamaProvider(cfg config.EmbeddingConfig) (*OllamaProvider, error) {
 		baseURL:   baseURL,
 		model:     cfg.Model,
 		dimension: dimension,
-		client: &http.Client{
-			Timeout: 60 * time.Second,
-		},
+		client:    httpclient.GetSharedClient(60 * time.Second),
 	}, nil
 }
 
@@ -58,6 +59,11 @@ func (p *OllamaProvider) Dimension() int {
 }
 
 func (p *OllamaProvider) EmbedSingle(ctx context.Context, text string) ([]float32, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, fmt.Errorf("cannot embed empty text")
+	}
+
 	req := ollamaEmbedRequest{
 		Model:  p.model,
 		Prompt: text,
@@ -94,14 +100,54 @@ func (p *OllamaProvider) EmbedSingle(ctx context.Context, text string) ([]float3
 }
 
 func (p *OllamaProvider) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, fmt.Errorf("cannot embed empty text list")
+	}
+
+	// Use concurrent requests for better performance
+	// Ollama doesn't have a native batch API, so we parallelize requests
+	const maxConcurrency = 10
+
 	embeddings := make([][]float32, len(texts))
+	errors := make([]error, len(texts))
+
+	// Create semaphore for concurrency control
+	sem := make(chan struct{}, maxConcurrency)
+	var wg sync.WaitGroup
 
 	for i, text := range texts {
-		emb, err := p.EmbedSingle(ctx, text)
+		wg.Add(1)
+		go func(idx int, txt string) {
+			defer wg.Done()
+
+			// Acquire semaphore
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			// Check context cancellation
+			select {
+			case <-ctx.Done():
+				errors[idx] = ctx.Err()
+				return
+			default:
+			}
+
+			emb, err := p.EmbedSingle(ctx, txt)
+			if err != nil {
+				errors[idx] = err
+				return
+			}
+			embeddings[idx] = emb
+		}(i, text)
+	}
+
+	wg.Wait()
+
+	// Check for errors
+	for i, err := range errors {
 		if err != nil {
 			return nil, fmt.Errorf("failed to embed text %d: %w", i, err)
 		}
-		embeddings[i] = emb
 	}
 
 	return embeddings, nil

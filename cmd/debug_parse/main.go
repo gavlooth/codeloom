@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	sitter "github.com/smacker/go-tree-sitter"
 	"github.com/heefoo/codeloom/internal/parser"
+	sitter "github.com/smacker/go-tree-sitter"
 )
 
 func printTree(node *sitter.Node, content []byte, indent string) {

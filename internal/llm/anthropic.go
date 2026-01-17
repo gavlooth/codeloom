@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -223,16 +224,31 @@ func (p *AnthropicProvider) Stream(ctx context.Context, messages []Message, opts
 
 	stream := p.client.Messages.NewStreaming(ctx, params)
 
-	ch := make(chan string)
+	ch := make(chan string, 100)
 	go func() {
 		defer close(ch)
 
-		for stream.Next() {
-			event := stream.Current()
-			switch delta := event.Delta.(type) {
-			case anthropic.ContentBlockDeltaEventDelta:
-				if delta.Type == "text_delta" {
-					ch <- delta.Text
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				if !stream.Next() {
+					if err := stream.Err(); err != nil {
+						log.Printf("anthropic stream error: %v", err)
+					}
+					return
+				}
+				event := stream.Current()
+				switch delta := event.Delta.(type) {
+				case anthropic.ContentBlockDeltaEventDelta:
+					if delta.Type == "text_delta" {
+						select {
+						case ch <- delta.Text:
+						case <-ctx.Done():
+							return
+						}
+					}
 				}
 			}
 		}

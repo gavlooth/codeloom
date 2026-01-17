@@ -37,7 +37,7 @@ type EmbeddingConfig struct {
 }
 
 type DatabaseConfig struct {
-	Backend   string         `toml:"backend"`
+	Backend   string          `toml:"backend"`
 	SurrealDB SurrealDBConfig `toml:"surrealdb"`
 }
 
@@ -117,6 +117,63 @@ func DefaultConfig() *Config {
 			Port: 3003,
 		},
 	}
+}
+
+func Validate(cfg *Config) []string {
+	var warnings []string
+
+	// Validate LLM settings
+	if cfg.LLM.Enabled {
+		if cfg.LLM.Provider == "" {
+			warnings = append(warnings, "LLM provider is enabled but no provider specified")
+		}
+		if cfg.LLM.MaxTokens < 1 {
+			warnings = append(warnings, "LLM MaxTokens must be at least 1")
+		}
+		if cfg.LLM.MaxTokens > 128000 {
+			warnings = append(warnings, "LLM MaxTokens exceeds reasonable maximum (128000)")
+		}
+		if cfg.LLM.Temperature < 0 || cfg.LLM.Temperature > 2 {
+			warnings = append(warnings, "LLM Temperature must be between 0 and 2")
+		}
+		if cfg.LLM.TimeoutSecs < 1 {
+			warnings = append(warnings, "LLM TimeoutSecs must be at least 1 second")
+		}
+		if cfg.LLM.TimeoutSecs > 600 {
+			warnings = append(warnings, "LLM TimeoutSecs exceeds reasonable maximum (600 seconds)")
+		}
+	}
+
+	// Validate embedding settings
+	if cfg.Embedding.Provider == "" {
+		warnings = append(warnings, "Embedding provider is empty")
+	}
+	if cfg.Embedding.Dimension < 1 || cfg.Embedding.Dimension > 10000 {
+		warnings = append(warnings, "Embedding dimension must be between 1 and 10000")
+	}
+	if cfg.Embedding.BatchSize < 1 || cfg.Embedding.BatchSize > 1000 {
+		warnings = append(warnings, "Embedding batch size must be between 1 and 1000")
+	}
+
+	// Validate database settings
+	if cfg.Database.Backend == "surrealdb" {
+		if cfg.Database.SurrealDB.URL == "" {
+			warnings = append(warnings, "SurrealDB URL cannot be empty")
+		}
+		if cfg.Database.SurrealDB.Namespace == "" {
+			warnings = append(warnings, "SurrealDB namespace cannot be empty")
+		}
+		if cfg.Database.SurrealDB.Database == "" {
+			warnings = append(warnings, "SurrealDB database cannot be empty")
+		}
+	}
+
+	// Validate server settings
+	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
+		warnings = append(warnings, "Server port must be between 1 and 65535")
+	}
+
+	return warnings
 }
 
 func applyEnvOverrides(cfg *Config) {
