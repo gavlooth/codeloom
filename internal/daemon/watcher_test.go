@@ -3,6 +3,7 @@ package daemon
 import (
 	"testing"
 
+	"github.com/heefoo/codeloom/internal/graph"
 	"github.com/heefoo/codeloom/internal/parser"
 )
 
@@ -26,10 +27,10 @@ func TestWatcherEdgeIDFormat(t *testing.T) {
 	}
 
 	// Verify edge ID format includes edge type
-	// This mirrors what happens in indexFile function
+	// This mirrors what happens in watcher.indexFile function
 	ids := make(map[string]bool)
 	for _, edge := range result.Edges {
-		id := formatEdgeID(edge.FromID, edge.ToID, string(edge.EdgeType))
+		id := graph.FormatEdgeID(edge.FromID, edge.ToID, graph.EdgeType(edge.EdgeType))
 		if ids[id] {
 			t.Errorf("Edge ID collision: %s (same nodes, different types should have unique IDs)", id)
 		}

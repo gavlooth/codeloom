@@ -303,7 +303,7 @@ func StoreEdgesBatch(
 		graphEdges := make([]*graph.CodeEdge, len(batch))
 		for i, edge := range batch {
 			graphEdges[i] = &graph.CodeEdge{
-				ID:       fmt.Sprintf("%s->%s:%s", edge.FromID, edge.ToID, edge.EdgeType),
+				ID:       graph.FormatEdgeID(edge.FromID, edge.ToID, graph.EdgeType(edge.EdgeType)),
 				FromID:   edge.FromID,
 				ToID:     edge.ToID,
 				EdgeType: graph.EdgeType(edge.EdgeType),

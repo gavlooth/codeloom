@@ -1,9 +1,9 @@
 package indexer
 
 import (
-	"fmt"
 	"testing"
 
+	"github.com/heefoo/codeloom/internal/graph"
 	"github.com/heefoo/codeloom/internal/parser"
 )
 
@@ -37,7 +37,7 @@ func TestEdgeIDGeneration(t *testing.T) {
 	// Use internal test function to simulate edge ID generation
 	ids := make(map[string]bool)
 	for _, edge := range edges {
-		// Simulate the ID generation pattern used in storage_util.go
+		// Simulate the ID generation pattern used in graph.FormatEdgeID
 		// After fix: fmt.Sprintf("%s->%s:%s", edge.FromID, edge.ToID, edge.EdgeType)
 		id := generateEdgeID(edge)
 		
@@ -100,13 +100,7 @@ func TestEdgeIDFormat(t *testing.T) {
 
 // generateEdgeID is a test helper that mirrors the edge ID generation logic
 func generateEdgeID(edge parser.CodeEdge) string {
-	// This mirrors the fixed pattern in storage_util.go:306
-	return formatEdgeID(edge.FromID, edge.ToID, edge.EdgeType)
+	// This mirrors pattern in graph.FormatEdgeID
+	return graph.FormatEdgeID(edge.FromID, edge.ToID, graph.EdgeType(edge.EdgeType))
 }
 
-// formatEdgeID is the actual edge ID formatting function (mirrors storage_util.go)
-func formatEdgeID(fromID, toID string, edgeType parser.EdgeType) string {
-	// Pattern: "FromID->ToID:EdgeType"
-	// This ensures unique IDs for different edge types between same nodes
-	return fmt.Sprintf("%s->%s:%s", fromID, toID, edgeType)
-}

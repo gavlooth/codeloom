@@ -400,6 +400,12 @@ func (s *Storage) GetTransitiveDependencies(ctx context.Context, nodeID string, 
 	return result, nil
 }
 
+// FormatEdgeID generates a unique edge ID using the format "fromID->toID:edgeType"
+// This ensures that different edge types between the same nodes have unique IDs
+func FormatEdgeID(fromID, toID string, edgeType EdgeType) string {
+	return fmt.Sprintf("%s->%s:%s", fromID, toID, edgeType)
+}
+
 // TraceCallChain finds a path of function calls from 'from' to 'to'.
 // Uses BFS to find the shortest path through call edges.
 func (s *Storage) TraceCallChain(ctx context.Context, from, to string) ([]CodeEdge, error) {
@@ -1050,9 +1056,7 @@ func (s *Storage) StoreGraphAtomic(ctx context.Context, nodes []*CodeNode, edges
 // This ensures data integrity by using a transaction:
 // 1. Delete old nodes and edges for file
 // 2. Store new nodes and edges
-// All operations are performed in a single transaction; if any step fails, the entire transaction is rolled back. the file
-// 2. Store new nodes and edges
-// If any step fails, the entire transaction is rolled back.
+// All operations are performed in a single transaction; if any step fails, the entire transaction is rolled back.
 func (s *Storage) UpdateFileAtomic(ctx context.Context, filePath string, nodes []*CodeNode, edges []*CodeEdge) error {
 	s.lockFile(filePath)
 	defer s.unlockFile(filePath)
@@ -1104,9 +1108,10 @@ func (s *Storage) UpdateFileAtomic(ctx context.Context, filePath string, nodes [
 	transactionParts = append(transactionParts,
 		`DELETE FROM nodes WHERE file_path = $filePath;`)
 
-	// Part 2.5: Delete old metadata for this file
-	transactionParts = append(transactionParts,
-		`DELETE FROM file_metadata WHERE file_path = $filePath;`)
+	// Part 2.5: Note - file_metadata is NOT deleted here to avoid data loss
+	// The caller (indexer) will call UpsertFileMetadata after this function completes
+	// This ensures metadata is never left in an inconsistent state
+
 
 	// Prepare data outside the transaction to avoid variable scope issues
 	var nodeData []map[string]any

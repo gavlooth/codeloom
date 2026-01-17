@@ -255,7 +255,7 @@ func (w *Watcher) indexFile(ctx context.Context, path string) error {
 	for i := range result.Edges {
 		edge := &result.Edges[i]
 		graphEdge := &graph.CodeEdge{
-			ID:       formatEdgeID(edge.FromID, edge.ToID, string(edge.EdgeType)),
+			ID:       graph.FormatEdgeID(edge.FromID, edge.ToID, graph.EdgeType(edge.EdgeType)),
 			FromID:   edge.FromID,
 			ToID:     edge.ToID,
 			EdgeType: graph.EdgeType(edge.EdgeType),
@@ -270,12 +270,6 @@ func (w *Watcher) indexFile(ctx context.Context, path string) error {
 	}
 
 	return nil
-}
-
-// formatEdgeID generates a unique edge ID using the format "fromID->toID:edgeType"
-// This ensures that different edge types between the same nodes have unique IDs
-func formatEdgeID(fromID, toID, edgeType string) string {
-	return fmt.Sprintf("%s->%s:%s", fromID, toID, edgeType)
 }
 
 func (w *Watcher) handleDelete(path string) {

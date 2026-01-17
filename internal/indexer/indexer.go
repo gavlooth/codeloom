@@ -363,7 +363,7 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 		for i := range result.edges {
 			edge := &result.edges[i]
 			graphEdge := &graph.CodeEdge{
-				ID:       fmt.Sprintf("%s->%s:%s", edge.FromID, edge.ToID, edge.EdgeType),
+				ID:       graph.FormatEdgeID(edge.FromID, edge.ToID, graph.EdgeType(edge.EdgeType)),
 				FromID:   edge.FromID,
 				ToID:     edge.ToID,
 				EdgeType: graph.EdgeType(edge.EdgeType),
@@ -495,7 +495,7 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 	for i := range result.Edges {
 		edge := &result.Edges[i]
 		graphEdge := &graph.CodeEdge{
-			ID:       fmt.Sprintf("%s->%s:%s", edge.FromID, edge.ToID, edge.EdgeType),
+			ID:       graph.FormatEdgeID(edge.FromID, edge.ToID, graph.EdgeType(edge.EdgeType)),
 			FromID:   edge.FromID,
 			ToID:     edge.ToID,
 			EdgeType: graph.EdgeType(edge.EdgeType),
