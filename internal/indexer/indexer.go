@@ -400,29 +400,25 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 		return fmt.Errorf("failed to resolve path: %w", err)
 	}
 
-	// Parse the file
+	// Parse file
 	result, err := idx.parser.ParseFile(ctx, absPath)
 	if err != nil {
 		return fmt.Errorf("failed to parse file: %w", err)
 	}
 
-	// Delete existing nodes for this file
-	if err := idx.storage.DeleteNodesByFile(ctx, absPath); err != nil {
-		log.Printf("Warning: failed to delete existing nodes: %v", err)
-	}
-
-	// Store nodes
-	for _, node := range result.Nodes {
+	// Generate embeddings for all nodes before storing
+	nodesWithEmbeddings := make([]*graph.CodeNode, 0, len(result.Nodes))
+	for i := range result.Nodes {
+		node := &result.Nodes[i]
 		var emb []float32
 		if idx.embedding != nil && node.Content != "" {
 			var embErr error
 			emb, embErr = idx.embedding.EmbedSingle(ctx, node.Content)
 			if embErr != nil {
 				log.Printf("Warning: embedding failed for %s: %v", node.ID, embErr)
-				emb = nil // Continue without embedding
+				// Continue without embedding rather than failing entirely
 			}
 		}
-
 		graphNode := &graph.CodeNode{
 			ID:          node.ID,
 			Name:        node.Name,
@@ -436,14 +432,13 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 			Annotations: node.Annotations,
 			Embedding:   emb,
 		}
-
-		if err := idx.storage.UpsertNode(ctx, graphNode); err != nil {
-			return fmt.Errorf("failed to store node: %w", err)
-		}
+		nodesWithEmbeddings = append(nodesWithEmbeddings, graphNode)
 	}
 
-	// Store edges
-	for _, edge := range result.Edges {
+	// Convert parser edges to graph edges
+	graphEdges := make([]*graph.CodeEdge, 0, len(result.Edges))
+	for i := range result.Edges {
+		edge := &result.Edges[i]
 		graphEdge := &graph.CodeEdge{
 			ID:       fmt.Sprintf("%s->%s", edge.FromID, edge.ToID),
 			FromID:   edge.FromID,
@@ -451,22 +446,26 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 			EdgeType: graph.EdgeType(edge.EdgeType),
 			Weight:   1.0,
 		}
+		graphEdges = append(graphEdges, graphEdge)
+	}
 
-		if err := idx.storage.UpsertEdge(ctx, graphEdge); err != nil {
-			return fmt.Errorf("failed to store edge: %w", err)
-		}
+	// Atomically update the file: delete old nodes/edges and store new ones in a single transaction
+	if err := idx.storage.UpdateFileAtomic(ctx, absPath, nodesWithEmbeddings, graphEdges); err != nil {
+		return fmt.Errorf("atomic file update failed for %s: %w", filePath, err)
 	}
 
 	return nil
 }
 
-// DeleteFile removes all nodes associated with a file from the index
+// DeleteFile removes all nodes and edges associated with a file from the index atomically
 func (idx *Indexer) DeleteFile(ctx context.Context, filePath string) error {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to resolve path: %w", err)
 	}
-	return idx.storage.DeleteNodesByFile(ctx, absPath)
+	// Use UpdateFileAtomic with empty nodes/edges to delete atomically
+	// This ensures both nodes and their associated edges are deleted together
+	return idx.storage.UpdateFileAtomic(ctx, absPath, []*graph.CodeNode{}, []*graph.CodeEdge{})
 }
 
 func (idx *Indexer) setError(msg string) {

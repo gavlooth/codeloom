@@ -282,9 +282,9 @@ func (w *Watcher) handleDelete(path string) {
 		return
 	}
 
-	if err := w.storage.DeleteNodesByFile(ctx, path); err != nil {
-		log.Printf("Warning: failed to delete nodes for %s: %v", path, err)
+	if err := w.storage.UpdateFileAtomic(ctx, path, []*graph.CodeNode{}, []*graph.CodeEdge{}); err != nil {
+		log.Printf("Warning: failed to delete file %s atomically: %v", path, err)
 	} else {
-		log.Printf("Deleted nodes for: %s", path)
+		log.Printf("Deleted: %s", path)
 	}
 }
