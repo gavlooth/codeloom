@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/heefoo/codeloom/internal/embedding"
@@ -276,14 +275,18 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 		return nil
 	}
 
-
-	// Parse all changed files first, storing results per-file
-	type fileParseResult struct {
-		nodes  []parser.CodeNode
-		edges  []parser.CodeEdge
-		err    error
+	// Clean up changed files before re-indexing using atomic operations
+	for _, path := range changedFiles {
+		// Use UpdateFileAtomic with empty nodes/edges to delete atomically
+		if err := idx.storage.UpdateFileAtomic(ctx, path, []*graph.CodeNode{}, []*graph.CodeEdge{}); err != nil {
+			log.Printf("Warning: failed to delete file %s atomically: %v", path, err)
+			continue
+		}
 	}
-	fileResults := make(map[string]fileParseResult)
+
+	// Parse only the changed files
+	var allNodes []parser.CodeNode
+	var allEdges []parser.CodeEdge
 	fileNodeCounts := make(map[string]int)
 	fileEdgeCounts := make(map[string]int)
 
@@ -294,112 +297,70 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 			idx.mu.Lock()
 			idx.status.Errors = append(idx.status.Errors, fmt.Sprintf("parse error: %s: %v", filePath, err))
 			idx.mu.Unlock()
-			fileResults[filePath] = fileParseResult{err: err}
 			continue
 		}
 
+		allNodes = append(allNodes, result.Nodes...)
+		allEdges = append(allEdges, result.Edges...)
 		fileNodeCounts[filePath] = len(result.Nodes)
 		fileEdgeCounts[filePath] = len(result.Edges)
-		fileResults[filePath] = fileParseResult{
-			nodes: result.Nodes,
-			edges: result.Edges,
-		}
-	}
-
-	// Count total nodes across all successfully parsed files
-	var totalNodes int
-	for _, r := range fileResults {
-		if r.err == nil {
-			totalNodes += len(r.nodes)
-		}
 	}
 
 	idx.mu.Lock()
 	idx.status.FilesIndexed = int64(len(changedFiles))
-	idx.status.NodesTotal = int64(totalNodes)
+	idx.status.NodesTotal = int64(len(allNodes))
 	idx.mu.Unlock()
 
 	if progressCb != nil {
 		progressCb(idx.GetStatus())
 	}
 
-	// Process each file atomically: generate embeddings, store, and update metadata
-	var nodesProcessed int32
+	// Store nodes using batch embedding
+	progressFunc := func(count int) {
+		idx.mu.Lock()
+		idx.status.NodesCreated = int64(count)
+
+		// Create a deep copy of Status to avoid race conditions.
+		// Struct assignment performs a shallow copy, handling all value types automatically.
+		// Only the Errors slice (reference type) needs explicit copying.
+		statusCopy := idx.status
+		if statusCopy.Errors != nil {
+			statusCopy.Errors = make([]string, len(idx.status.Errors))
+			copy(statusCopy.Errors, idx.status.Errors)
+		}
+
+		idx.mu.Unlock()
+		if progressCb != nil {
+			progressCb(statusCopy)
+		}
+	}
+
+	if err := StoreNodesBatch(ctx, allNodes, idx.storage, idx.embedding, progressFunc); err != nil {
+		idx.setError(fmt.Sprintf("failed to store nodes: %v", err))
+		return err
+	}
+
+	// Store edges
+	if err := StoreEdgesBatch(ctx, allEdges, idx.storage); err != nil {
+		idx.setError(err.Error())
+		return err
+	}
+
+	// Update file metadata for changed files
+	now := time.Now().Unix()
 	for _, filePath := range changedFiles {
-		result := fileResults[filePath]
-
-		// Skip files that failed to parse
-		if result.err != nil {
-			continue
-		}
-
-		// Generate embeddings for this file's nodes
-		nodesWithEmbeddings := make([]*graph.CodeNode, 0, len(result.nodes))
-		for i := range result.nodes {
-			node := &result.nodes[i]
-			var emb []float32
-			if idx.embedding != nil && node.Content != "" {
-				var embErr error
-				emb, embErr = idx.embedding.EmbedSingle(ctx, node.Content)
-				if embErr != nil {
-					log.Printf("Warning: embedding failed for %s: %v", node.ID, embErr)
-					// Continue without embedding rather than failing entirely
-				}
-			}
-			graphNode := &graph.CodeNode{
-				ID:          node.ID,
-				Name:        node.Name,
-				NodeType:    graph.NodeType(node.NodeType),
-				Language:    string(node.Language),
-				FilePath:    node.FilePath,
-				StartLine:   node.StartLine,
-				EndLine:     node.EndLine,
-				Content:     node.Content,
-				DocComment:  node.DocComment,
-				Annotations: node.Annotations,
-				Embedding:   emb,
-			}
-			nodesWithEmbeddings = append(nodesWithEmbeddings, graphNode)
-		}
-
-		// Convert parser edges to graph edges
-		graphEdges := make([]*graph.CodeEdge, 0, len(result.edges))
-		for i := range result.edges {
-			edge := &result.edges[i]
-			graphEdge := &graph.CodeEdge{
-				ID:       fmt.Sprintf("%s->%s:%s", edge.FromID, edge.ToID, edge.EdgeType),
-				FromID:   edge.FromID,
-				ToID:     edge.ToID,
-				EdgeType: graph.EdgeType(edge.EdgeType),
-				Weight:   1.0,
-			}
-			graphEdges = append(graphEdges, graphEdge)
-		}
-
-		// Atomically update file: delete old nodes/edges and store new ones in a single transaction
-		if err := idx.storage.UpdateFileAtomic(ctx, filePath, nodesWithEmbeddings, graphEdges); err != nil {
-			log.Printf("Warning: failed to update file %s atomically: %v", filePath, err)
-			idx.mu.Lock()
-			idx.status.Errors = append(idx.status.Errors, fmt.Sprintf("update error: %s: %v", filePath, err))
-			idx.mu.Unlock()
-			continue
-		}
-
-		// Update file metadata
 		info, err := os.Stat(filePath)
 		if err != nil {
-			log.Printf("Warning: failed to stat %s: %v", filePath, err)
 			continue
 		}
 
 		hash, err := computeFileHash(filePath)
 		if err != nil {
-			log.Printf("Warning: failed to hash %s: %v", filePath, err)
 			continue
 		}
 
+		// Detect language for metadata
 		lang := idx.parser.DetectLanguage(filePath)
-		now := time.Now().Unix()
 
 		meta := &graph.FileMetadata{
 			FilePath:    filePath,
@@ -415,33 +376,13 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 		if err := idx.storage.UpsertFileMetadata(ctx, meta); err != nil {
 			log.Printf("Warning: failed to save metadata for %s: %v", filePath, err)
 		}
-
-		// Update progress
-		atomic.AddInt32(&nodesProcessed, int32(len(nodesWithEmbeddings)))
-		if progressCb != nil {
-			idx.mu.Lock()
-			idx.status.NodesCreated = int64(atomic.LoadInt32(&nodesProcessed))
-			statusCopy := idx.status
-			if statusCopy.Errors != nil {
-				statusCopy.Errors = make([]string, len(idx.status.Errors))
-				copy(statusCopy.Errors, idx.status.Errors)
-			}
-			idx.mu.Unlock()
-			progressCb(statusCopy)
-		}
 	}
 
 	// Update final status
-	var totalEdges int
-	for _, r := range fileResults {
-		if r.err == nil {
-			totalEdges += len(r.edges)
-		}
-	}
-
 	idx.mu.Lock()
 	idx.status.State = "idle"
-	idx.status.EdgesCreated = int64(totalEdges)
+	idx.status.NodesCreated = int64(len(allNodes))
+	idx.status.EdgesCreated = int64(len(allEdges))
 	idx.status.CompletedAt = time.Now()
 	idx.mu.Unlock()
 
