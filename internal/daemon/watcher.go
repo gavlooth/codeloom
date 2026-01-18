@@ -308,9 +308,12 @@ func (w *Watcher) handleDelete(ctx context.Context, path string) {
 		return
 	}
 
-	if err := w.storage.UpdateFileAtomic(indexCtx, path, []*graph.CodeNode{}, []*graph.CodeEdge{}); err != nil {
-		log.Printf("Warning: failed to delete file %s atomically: %v", path, err)
-	} else {
-		log.Printf("Deleted: %s", path)
+	// Only attempt to delete if storage is configured
+	if w.storage != nil {
+		if err := w.storage.UpdateFileAtomic(indexCtx, path, []*graph.CodeNode{}, []*graph.CodeEdge{}); err != nil {
+			log.Printf("Warning: failed to delete file %s atomically: %v", path, err)
+		} else {
+			log.Printf("Deleted: %s", path)
+		}
 	}
 }

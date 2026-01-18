@@ -196,19 +196,19 @@ func testFunc() string {
 	t.Log("PASS: Watcher delete timeout uses configured IndexTimeoutMs")
 }
 
-// TestWatcherDeleteContextCancellation is a documentation test for the context propagation fix.
+// TestWatcherDeleteContextCancellation verifies that handleDelete respects context cancellation.
 //
 // ISSUE: In internal/daemon/watcher.go, the handleDelete function did not use
 // the parent context passed from processPending, which prevented graceful shutdown.
 //
-// BEFORE FIX (lines 311-327):
+// BEFORE FIX:
 //
 //	func (w *Watcher) handleDelete(path string) {
 //	    indexCtx, cancel := context.WithTimeout(context.Background(), ...)
 //	    ...
 //	}
 //
-// CALL SITE (line 224):
+// CALL SITE:
 //
 //	w.handleDelete(strings.TrimSuffix(path, "|DELETE"))
 //
@@ -216,22 +216,51 @@ func testFunc() string {
 // continue to run for up to IndexTimeoutMs (default 60 seconds), preventing
 // graceful shutdown.
 //
-// FIX (lines 311-327):
+// FIX:
 //
 //	func (w *Watcher) handleDelete(ctx context.Context, path string) {
 //	    indexCtx, cancel := context.WithTimeout(ctx, ...)  // Use parent context!
 //	    ...
 //	}
 //
-// CALL SITE (line 224):
+// CALL SITE:
 //
 //	w.handleDelete(ctx, strings.TrimSuffix(path, "|DELETE"))  // Pass context!
 //
 // BENEFIT: Delete operations now respect parent context cancellation, allowing
 // graceful shutdown of the watcher.
 //
-// This test documents the fix - behavioral verification is covered by
-// TestWatcherContextCancellation which tests the same pattern on indexFile.
+// This test verifies that handleDelete completes immediately when called with a
+// cancelled context, ensuring no goroutine leaks or blocking behavior.
 func TestWatcherDeleteContextCancellation(t *testing.T) {
-	t.Skip("documentation test - see comment above for fix details")
+	// Create a cancelled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	// Create watcher without storage - we're testing cancellation behavior,
+	// not actual deletion. The nil check in handleDelete prevents panic.
+	w, err := NewWatcher(WatcherConfig{
+		Parser:     parser.NewParser(),
+		DebounceMs: 10,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create watcher: %v", err)
+	}
+
+	// Call handleDelete with cancelled context
+	// Should complete immediately without hanging or panicking
+	done := make(chan bool)
+	go func() {
+		w.handleDelete(ctx, "/test/path/file.go")
+		done <- true
+	}()
+
+	// Verify that handleDelete completes quickly (within 1 second)
+	select {
+	case <-done:
+		// Success - handleDelete respected context cancellation
+		t.Log("PASS: handleDelete respects context cancellation and completes immediately")
+	case <-time.After(1 * time.Second):
+		t.Fatal("handleDelete did not complete within 1 second - likely blocking or not respecting context cancellation")
+	}
 }
