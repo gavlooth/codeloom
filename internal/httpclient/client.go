@@ -8,8 +8,6 @@ import (
 )
 
 var (
-	clientsMutex sync.RWMutex
-	sharedClients = make(map[int64]*clientEntry)
 	transportOnce sync.Once
 	sharedTransport *http.Transport
 )
@@ -108,8 +106,6 @@ func GetSharedClient(timeout time.Duration) *http.Client {
 	for cache.ll.Len() > cache.maxSize {
 		oldest := cache.ll.Back()
 		if oldest != nil {
-			// Get the timeout key from the entry
-			// = oldest.Value.(*clientEntry)
 			// Remove from entries map (need to iterate to find key)
 			for k, v := range cache.entries {
 				if v == oldest {
@@ -158,7 +154,6 @@ func SetMaxCacheSize(size int) {
 	for cache.ll.Len() > cache.maxSize {
 		oldest := cache.ll.Back()
 		if oldest != nil {
-			// = oldest.Value.(*clientEntry)
 			for k, v := range cache.entries {
 				if v == oldest {
 					delete(cache.entries, k)
