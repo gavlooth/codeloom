@@ -102,3 +102,28 @@ func contains(s, substr string) bool {
 	}
 	return false
 }
+
+// TestEnvOverrideIndexTimeout verifies environment variable override
+func TestEnvOverrideIndexTimeout(t *testing.T) {
+	// Save original env value
+	origVal := os.Getenv("CODELOOM_INDEX_TIMEOUT_MS")
+	defer func() {
+		if origVal == "" {
+			os.Unsetenv("CODELOOM_INDEX_TIMEOUT_MS")
+		} else {
+			os.Setenv("CODELOOM_INDEX_TIMEOUT_MS", origVal)
+		}
+	}()
+
+	// Test with custom timeout value (30 seconds)
+	os.Setenv("CODELOOM_INDEX_TIMEOUT_MS", "30000")
+
+	cfg := DefaultConfig()
+	applyEnvOverrides(cfg)
+
+	if cfg.Server.IndexTimeoutMs != 30000 {
+		t.Errorf("Expected IndexTimeoutMs 30000 from env, got %d", cfg.Server.IndexTimeoutMs)
+	}
+
+	t.Log("PASS: Environment variable override works for index timeout")
+}

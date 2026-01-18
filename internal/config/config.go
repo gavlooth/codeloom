@@ -53,6 +53,7 @@ type ServerConfig struct {
 	Mode        string `toml:"mode"`
 	Port        int    `toml:"port"`
 	WatcherDebounceMs int `toml:"watcher_debounce_ms"`
+	IndexTimeoutMs    int `toml:"index_timeout_ms"`
 }
 
 func Load(path string) (*Config, error) {
@@ -117,6 +118,7 @@ func DefaultConfig() *Config {
 			Mode:        "stdio",
 			Port:        3003,
 			WatcherDebounceMs: 100,
+			IndexTimeoutMs: 60000, // Default 60 second timeout for indexing operations
 		},
 	}
 }
@@ -179,6 +181,12 @@ func Validate(cfg *Config) []string {
 	}
 	if cfg.Server.WatcherDebounceMs > 60000 {
 		warnings = append(warnings, "Watcher debounce exceeds reasonable maximum (60000ms)")
+	}
+	if cfg.Server.IndexTimeoutMs < 1000 {
+		warnings = append(warnings, "Index timeout must be at least 1 second")
+	}
+	if cfg.Server.IndexTimeoutMs > 300000 {
+		warnings = append(warnings, "Index timeout exceeds reasonable maximum (300 seconds)")
 	}
 
 	return warnings
@@ -261,6 +269,11 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("CODELOOM_WATCHER_DEBOUNCE_MS"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
 			cfg.Server.WatcherDebounceMs = i
+		}
+	}
+	if v := os.Getenv("CODELOOM_INDEX_TIMEOUT_MS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Server.IndexTimeoutMs = i
 		}
 	}
 }

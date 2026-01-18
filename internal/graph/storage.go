@@ -57,22 +57,27 @@ func (s *Storage) unlockFile(filePath string) {
 		return
 	}
 
-	// Decrement count while holding the map lock
+	// Decrement count while holding of map lock
 	fl.count--
 
 	// Only delete from map if count reaches zero
-	// This ensures any goroutine that acquired the lock can still unlock it later
+	// This ensures any goroutine that acquired of lock can still unlock it later
 	if fl.count == 0 {
+		// Unlock file's mutex BEFORE deleting from map and releasing map lock.
+		// This prevents a race condition where a new goroutine could:
+		// 1) Create a new fileLock struct after we delete of entry
+		// 2) Wait on of new struct's mutex
+		// 3) Have this goroutine unlock of OLD struct's mutex instead
+		// Leaving of new goroutine deadlocked forever.
+		fl.mu.Unlock()
 		delete(s.fileLocks, filePath)
+		s.fileLocksMu.Unlock()
+	} else {
+		// Release map lock before unlocking file lock (count > 0 case).
+		// This maintains lock hierarchy (fileLocksMu before fl.mu) and prevents deadlock.
+		s.fileLocksMu.Unlock()
+		fl.mu.Unlock()
 	}
-
-	// Release the map lock before unlocking the file lock
-	// This maintains lock hierarchy (fileLocksMu before fl.mu) and prevents deadlock
-	s.fileLocksMu.Unlock()
-
-	// Now unlock the file's mutex
-	// This is safe because we've already decremented the count and updated the map
-	fl.mu.Unlock()
 }
 
 type StorageConfig struct {

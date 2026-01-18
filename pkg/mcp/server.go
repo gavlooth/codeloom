@@ -518,7 +518,11 @@ func (s *Server) handleIndex(ctx context.Context, request mcp.CallToolRequest) (
 		"errors_count":  len(status.Errors),
 	}
 
-	jsonBytes, _ := json.Marshal(result)
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		log.Printf("Error marshaling index status result: %v", err)
+		return errorResult(fmt.Sprintf("Failed to format index status: %v", err))
+	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			mcp.TextContent{
@@ -535,7 +539,11 @@ func (s *Server) handleIndexStatus(ctx context.Context, request mcp.CallToolRequ
 			"state":   "not_initialized",
 			"message": "Indexer not initialized. Call codeloom_index first to index a codebase.",
 		}
-		jsonBytes, _ := json.Marshal(result)
+		jsonBytes, err := json.Marshal(result)
+		if err != nil {
+			log.Printf("Error marshaling unindexed status result: %v", err)
+			return errorResult(fmt.Sprintf("Failed to format status: %v", err))
+		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				mcp.TextContent{
@@ -566,7 +574,11 @@ func (s *Server) handleIndexStatus(ctx context.Context, request mcp.CallToolRequ
 		result["duration"] = status.CompletedAt.Sub(status.StartedAt).String()
 	}
 
-	jsonBytes, _ := json.Marshal(result)
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		log.Printf("Error marshaling index status with timestamps: %v", err)
+		return errorResult(fmt.Sprintf("Failed to format index status: %v", err))
+	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			mcp.TextContent{
@@ -867,7 +879,11 @@ func (s *Server) handleSemanticSearch(ctx context.Context, request mcp.CallToolR
 		"count":   len(results),
 	}
 
-	jsonBytes, _ := json.Marshal(result)
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		log.Printf("Error marshaling semantic search result: %v", err)
+		return errorResult(fmt.Sprintf("Failed to format search results: %v", err))
+	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			mcp.TextContent{
@@ -913,7 +929,11 @@ func (s *Server) handleTransitiveDeps(ctx context.Context, request mcp.CallToolR
 		"count":        len(results),
 	}
 
-	jsonBytes, _ := json.Marshal(result)
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		log.Printf("Error marshaling transitive dependencies result: %v", err)
+		return errorResult(fmt.Sprintf("Failed to format dependencies: %v", err))
+	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			mcp.TextContent{
@@ -959,7 +979,11 @@ func (s *Server) handleTraceCallChain(ctx context.Context, request mcp.CallToolR
 		"found":      len(chain) > 0,
 	}
 
-	jsonBytes, _ := json.Marshal(result)
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		log.Printf("Error marshaling call chain result: %v", err)
+		return errorResult(fmt.Sprintf("Failed to format call chain: %v", err))
+	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			mcp.TextContent{
@@ -1009,6 +1033,7 @@ func (s *Server) handleWatch(ctx context.Context, request mcp.CallToolRequest) (
 			Embedding:       s.embedding,
 			ExcludePatterns: indexer.DefaultExcludePatterns(),
 			DebounceMs:      s.config.Server.WatcherDebounceMs,
+			IndexTimeoutMs:  s.config.Server.IndexTimeoutMs,
 		})
 		if err != nil {
 			s.mu.Unlock()
@@ -1037,7 +1062,11 @@ func (s *Server) handleWatch(ctx context.Context, request mcp.CallToolRequest) (
 			"directories": dirs,
 			"message":     fmt.Sprintf("Now watching %d directories for source code changes", len(dirs)),
 		}
-		jsonBytes, _ := json.Marshal(result)
+		jsonBytes, err := json.Marshal(result)
+		if err != nil {
+			log.Printf("Error marshaling watch start result: %v", err)
+			return errorResult(fmt.Sprintf("Failed to format watch status: %v", err))
+		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				mcp.TextContent{
@@ -1070,7 +1099,11 @@ func (s *Server) handleWatch(ctx context.Context, request mcp.CallToolRequest) (
 			"previously_watching": watchedDirs,
 			"message":             "Stopped watching for source code changes",
 		}
-		jsonBytes, _ := json.Marshal(result)
+		jsonBytes, err := json.Marshal(result)
+		if err != nil {
+			log.Printf("Error marshaling watch stop result: %v", err)
+			return errorResult(fmt.Sprintf("Failed to format watch status: %v", err))
+		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				mcp.TextContent{
@@ -1096,7 +1129,11 @@ func (s *Server) handleWatch(ctx context.Context, request mcp.CallToolRequest) (
 			result["message"] = "Not currently watching any directories"
 		}
 
-		jsonBytes, _ := json.Marshal(result)
+		jsonBytes, err := json.Marshal(result)
+		if err != nil {
+			log.Printf("Error marshaling watch status result: %v", err)
+			return errorResult(fmt.Sprintf("Failed to format watch status: %v", err))
+		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				mcp.TextContent{
@@ -1136,7 +1173,20 @@ func errorResult(msg string) (*mcp.CallToolResult, error) {
 		"error":   true,
 		"message": msg,
 	}
-	jsonBytes, _ := json.Marshal(result)
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		log.Printf("Error marshaling error result: %v", err)
+		// Fallback to plain text if JSON marshaling fails
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: fmt.Sprintf("{\"error\":true,\"message\":%q}", msg),
+				},
+			},
+			IsError: true,
+		}, nil
+	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			mcp.TextContent{
@@ -1461,11 +1511,14 @@ func (s *Server) gatherCodeContextByName(ctx context.Context, query string, limi
 		// Search for nodes matching this name
 		nodes, err := s.storage.FindByName(ctx, name)
 		if err != nil {
+			// Log error but continue trying other names
+			// This allows partial results instead of failing completely
+			log.Printf("Warning: failed to search for name '%s': %v", name, err)
 			continue
 		}
 		allNodes = append(allNodes, nodes...)
-	}
 
+	}
 	// Deduplicate by ID
 	seen := make(map[string]bool)
 	var uniqueNodes []graph.CodeNode

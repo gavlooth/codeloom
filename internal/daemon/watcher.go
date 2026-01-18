@@ -24,6 +24,7 @@ type Watcher struct {
 	embedding       embedding.Provider
 	excludePatterns []string
 	debounceMs      atomic.Int64
+	indexTimeoutMs  atomic.Int64
 	mu              sync.Mutex
 	pendingFiles    map[string]time.Time
 	stopCh          chan struct{}
@@ -36,6 +37,7 @@ type WatcherConfig struct {
 	Embedding       embedding.Provider
 	ExcludePatterns []string
 	DebounceMs      int
+	IndexTimeoutMs  int
 }
 
 func NewWatcher(cfg WatcherConfig) (*Watcher, error) {
@@ -49,6 +51,11 @@ func NewWatcher(cfg WatcherConfig) (*Watcher, error) {
 		debounceMs = 100 // Default 100ms debounce
 	}
 
+	indexTimeoutMs := cfg.IndexTimeoutMs
+	if indexTimeoutMs == 0 {
+		indexTimeoutMs = 60000 // Default 60 second timeout for indexing operations
+	}
+
 	w := &Watcher{
 		watcher:         fsWatcher,
 		parser:          cfg.Parser,
@@ -59,6 +66,7 @@ func NewWatcher(cfg WatcherConfig) (*Watcher, error) {
 		stopCh:          make(chan struct{}),
 	}
 	w.debounceMs.Store(int64(debounceMs))
+	w.indexTimeoutMs.Store(int64(indexTimeoutMs))
 	return w, nil
 }
 
@@ -290,7 +298,8 @@ func (w *Watcher) indexFile(ctx context.Context, path string) error {
 
 func (w *Watcher) handleDelete(path string) {
 	// Use a timeout context to avoid blocking indefinitely
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// This matches the timeout protection used in indexFile
+	indexCtx, cancel := context.WithTimeout(context.Background(), time.Duration(w.indexTimeoutMs.Load())*time.Millisecond)
 	defer cancel()
 
 	if path == "" {
@@ -298,7 +307,7 @@ func (w *Watcher) handleDelete(path string) {
 		return
 	}
 
-	if err := w.storage.UpdateFileAtomic(ctx, path, []*graph.CodeNode{}, []*graph.CodeEdge{}); err != nil {
+	if err := w.storage.UpdateFileAtomic(indexCtx, path, []*graph.CodeNode{}, []*graph.CodeEdge{}); err != nil {
 		log.Printf("Warning: failed to delete file %s atomically: %v", path, err)
 	} else {
 		log.Printf("Deleted: %s", path)
