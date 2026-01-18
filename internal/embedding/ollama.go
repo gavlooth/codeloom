@@ -87,7 +87,10 @@ func (p *OllamaProvider) EmbedSingle(ctx context.Context, text string) ([]float3
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("ollama embedding error: %s - failed to read response body: %v", resp.Status, err)
+		}
 		return nil, fmt.Errorf("ollama embedding error: %s - %s", resp.Status, string(body))
 	}
 

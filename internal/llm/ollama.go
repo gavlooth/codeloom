@@ -133,7 +133,10 @@ func (p *OllamaProvider) Generate(ctx context.Context, messages []Message, opts 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("ollama error: %s - failed to read response body: %v", resp.Status, err)
+		}
 		return "", fmt.Errorf("ollama error: %s - %s", resp.Status, string(body))
 	}
 
@@ -195,7 +198,10 @@ func (p *OllamaProvider) GenerateWithTools(ctx context.Context, messages []Messa
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("ollama error: %s - failed to read response body: %v", resp.Status, err)
+		}
 		return nil, fmt.Errorf("ollama error: %s - %s", resp.Status, string(body))
 	}
 
@@ -263,8 +269,11 @@ func (p *OllamaProvider) Stream(ctx context.Context, messages []Message, opts ..
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("ollama error: %s - failed to read response body: %v", resp.Status, err)
+		}
 		return nil, fmt.Errorf("ollama error: %s - %s", resp.Status, string(body))
 	}
 

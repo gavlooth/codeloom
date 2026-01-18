@@ -22,17 +22,18 @@ import (
 )
 
 type Server struct {
-	llm       llm.Provider
-	config    *config.Config
-	mcp       *server.MCPServer
-	indexer   *indexer.Indexer
-	storage   *graph.Storage
-	embedding embedding.Provider
-	watcher   *daemon.Watcher
-	watchCtx  context.Context
-	watchStop context.CancelFunc
-	watchDirs []string
-	mu        sync.RWMutex
+	llm        llm.Provider
+	config     *config.Config
+	mcp        *server.MCPServer
+	indexer    *indexer.Indexer
+	storage    *graph.Storage
+	embedding  embedding.Provider
+	watcher    *daemon.Watcher
+	watchCtx   context.Context
+	watchStop  context.CancelFunc
+	watchDirs  []string
+	watchWg    sync.WaitGroup // Tracks watcher goroutine lifecycle
+	mu         sync.RWMutex
 }
 
 type ServerConfig struct {
@@ -1017,7 +1018,7 @@ func (s *Server) handleWatch(ctx context.Context, request mcp.CallToolRequest) (
 			return errorResult(fmt.Sprintf("failed to initialize indexer: %v", err))
 		}
 
-		// Stop existing watcher if running
+		// Stop existing watcher if running and wait for goroutine to finish
 		s.mu.Lock()
 		if s.watcher != nil {
 			s.watcher.Stop()
@@ -1025,6 +1026,9 @@ func (s *Server) handleWatch(ctx context.Context, request mcp.CallToolRequest) (
 				s.watchStop()
 			}
 		}
+		// Wait for any existing watcher goroutine to finish before starting new one
+		s.mu.Unlock()
+		s.watchWg.Wait()
 
 		// Create new watcher
 		watcher, err := daemon.NewWatcher(daemon.WatcherConfig{
@@ -1036,20 +1040,23 @@ func (s *Server) handleWatch(ctx context.Context, request mcp.CallToolRequest) (
 			IndexTimeoutMs:  s.config.Server.IndexTimeoutMs,
 		})
 		if err != nil {
-			s.mu.Unlock()
 			return errorResult(fmt.Sprintf("failed to create watcher: %v", err))
 		}
 
 		// Create context for watcher
 		watchCtx, watchStop := context.WithCancel(context.Background())
+
+		s.mu.Lock()
 		s.watcher = watcher
 		s.watchCtx = watchCtx
 		s.watchStop = watchStop
 		s.watchDirs = dirs
 		s.mu.Unlock()
 
-		// Start watching in background
+		// Start watching in background and track with WaitGroup
+		s.watchWg.Add(1)
 		go func() {
+			defer s.watchWg.Done()
 			if err := watcher.Watch(watchCtx, dirs); err != nil {
 				if err != context.Canceled {
 					log.Printf("Watcher error: %v", err)
@@ -1468,7 +1475,7 @@ func (s *Server) ServeHTTP(ctx context.Context, port int) error {
 func (s *Server) Close() error {
 	var errs []error
 
-	// Stop watcher if running
+	// Stop watcher if running and wait for goroutine to finish
 	s.mu.Lock()
 	if s.watcher != nil {
 		s.watcher.Stop()
@@ -1479,6 +1486,9 @@ func (s *Server) Close() error {
 		s.watchStop = nil
 	}
 	s.mu.Unlock()
+
+	// Wait for watcher goroutine to finish before proceeding with cleanup
+	s.watchWg.Wait()
 
 	// Close LLM provider
 	if s.llm != nil {
