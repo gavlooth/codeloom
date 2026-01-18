@@ -16,6 +16,7 @@ import (
 	"github.com/heefoo/codeloom/internal/embedding"
 	"github.com/heefoo/codeloom/internal/graph"
 	"github.com/heefoo/codeloom/internal/parser"
+	"github.com/heefoo/codeloom/internal/util"
 )
 
 // Status represents the current indexing status
@@ -92,18 +93,6 @@ func DefaultExcludePatterns() []string {
 		"*.map",
 		".codeloom",
 	}
-}
-
-// matchPattern wraps filepath.Match with proper error logging
-// Returns true if pattern matches name, false otherwise
-// Logs any pattern errors to help users fix malformed patterns
-func matchPattern(pattern, name string) bool {
-	matched, err := filepath.Match(pattern, name)
-	if err != nil {
-		log.Printf("Warning: invalid pattern '%s': %v. Pattern will not match any files.", pattern, err)
-		return false
-	}
-	return matched
 }
 
 // GetStatus returns the current indexing status
@@ -210,7 +199,7 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 		// Skip directories and apply exclude patterns
 		if info.IsDir() {
 			for _, pattern := range idx.excludePatterns {
-				if matchPattern(pattern, info.Name()) {
+				if util.MatchPattern(pattern, info.Name()) {
 					return filepath.SkipDir
 				}
 			}
