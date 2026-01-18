@@ -1,7 +1,7 @@
 package commonlisp_lang
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../commonlisp/src -std=c11
+#cgo CFLAGS: -I${SRCDIR}/../commonlisp/src -std=c11 -fPIC
 #include "parser.c"
 */
 import "C"
