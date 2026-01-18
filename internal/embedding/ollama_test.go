@@ -121,11 +121,11 @@ func TestOllamaProviderDimension(t *testing.T) {
 
 func TestOllamaProviderEmbedSingle(t *testing.T) {
 	tests := []struct {
-		name       string
-		text       string
-		respStatus int
-		respBody   string
-		wantErr    bool
+		name        string
+		text        string
+		respStatus  int
+		respBody    string
+		wantErr     bool
 		errContains string
 	}{
 		{
@@ -136,35 +136,35 @@ func TestOllamaProviderEmbedSingle(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name:       "empty text error",
-			text:       "",
-			respStatus: http.StatusOK,
-			respBody:   `{"embedding":[0.1,0.2,0.3]}`,
-			wantErr:    true,
+			name:        "empty text error",
+			text:        "",
+			respStatus:  http.StatusOK,
+			respBody:    `{"embedding":[0.1,0.2,0.3]}`,
+			wantErr:     true,
 			errContains: "cannot embed empty text",
 		},
 		{
-			name:       "whitespace only error",
-			text:       "   \n\t  ",
-			respStatus: http.StatusOK,
-			respBody:   `{"embedding":[0.1,0.2,0.3]}`,
-			wantErr:    true,
+			name:        "whitespace only error",
+			text:        "   \n\t  ",
+			respStatus:  http.StatusOK,
+			respBody:    `{"embedding":[0.1,0.2,0.3]}`,
+			wantErr:     true,
 			errContains: "cannot embed empty text",
 		},
 		{
-			name:       "server error",
-			text:       "test text",
-			respStatus: http.StatusInternalServerError,
-			respBody:   `{"error":"internal server error"}`,
-			wantErr:    true,
+			name:        "server error",
+			text:        "test text",
+			respStatus:  http.StatusInternalServerError,
+			respBody:    `{"error":"internal server error"}`,
+			wantErr:     true,
 			errContains: "ollama embedding error",
 		},
 		{
-			name:       "invalid JSON response",
-			text:       "test text",
-			respStatus: http.StatusOK,
-			respBody:   `invalid json`,
-			wantErr:    true,
+			name:        "invalid JSON response",
+			text:        "test text",
+			respStatus:  http.StatusOK,
+			respBody:    `invalid json`,
+			wantErr:     true,
 			errContains: "ollama decode error",
 		},
 		{

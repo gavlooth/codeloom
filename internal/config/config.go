@@ -50,10 +50,10 @@ type SurrealDBConfig struct {
 }
 
 type ServerConfig struct {
-	Mode        string `toml:"mode"`
-	Port        int    `toml:"port"`
-	WatcherDebounceMs int `toml:"watcher_debounce_ms"`
-	IndexTimeoutMs    int `toml:"index_timeout_ms"`
+	Mode              string `toml:"mode"`
+	Port              int    `toml:"port"`
+	WatcherDebounceMs int    `toml:"watcher_debounce_ms"`
+	IndexTimeoutMs    int    `toml:"index_timeout_ms"`
 }
 
 func Load(path string) (*Config, error) {
@@ -115,10 +115,10 @@ func DefaultConfig() *Config {
 			},
 		},
 		Server: ServerConfig{
-			Mode:        "stdio",
-			Port:        3003,
+			Mode:              "stdio",
+			Port:              3003,
 			WatcherDebounceMs: 100,
-			IndexTimeoutMs: 60000, // Default 60 second timeout for indexing operations
+			IndexTimeoutMs:    60000, // Default 60 second timeout for indexing operations
 		},
 	}
 }

@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	transportOnce sync.Once
+	transportOnce   sync.Once
 	sharedTransport *http.Transport
 )
 

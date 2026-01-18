@@ -22,18 +22,18 @@ import (
 )
 
 type Server struct {
-	llm        llm.Provider
-	config     *config.Config
-	mcp        *server.MCPServer
-	indexer    *indexer.Indexer
-	storage    *graph.Storage
-	embedding  embedding.Provider
-	watcher    *daemon.Watcher
-	watchCtx   context.Context
-	watchStop  context.CancelFunc
-	watchDirs  []string
-	watchWg    sync.WaitGroup // Tracks watcher goroutine lifecycle
-	mu         sync.RWMutex
+	llm       llm.Provider
+	config    *config.Config
+	mcp       *server.MCPServer
+	indexer   *indexer.Indexer
+	storage   *graph.Storage
+	embedding embedding.Provider
+	watcher   *daemon.Watcher
+	watchCtx  context.Context
+	watchStop context.CancelFunc
+	watchDirs []string
+	watchWg   sync.WaitGroup // Tracks watcher goroutine lifecycle
+	mu        sync.RWMutex
 }
 
 type ServerConfig struct {

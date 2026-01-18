@@ -227,6 +227,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, messages []Message, opts
 	ch := make(chan string, 100)
 	go func() {
 		defer close(ch)
+		defer stream.Close()
 
 		for {
 			select {

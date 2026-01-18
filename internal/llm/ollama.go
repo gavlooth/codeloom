@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -286,6 +287,7 @@ func (p *OllamaProvider) Stream(ctx context.Context, messages []Message, opts ..
 		for scanner.Scan() {
 			var chatResp ollamaChatResponse
 			if err := json.Unmarshal(scanner.Bytes(), &chatResp); err != nil {
+				log.Printf("ollama stream error: failed to unmarshal JSON: %v", err)
 				continue
 			}
 			if chatResp.Message.Content != "" {

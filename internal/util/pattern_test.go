@@ -99,10 +99,10 @@ func TestMatchPatternInvalid(t *testing.T) {
 	// Test that invalid patterns are handled gracefully (return false, log warning)
 	// These should not panic, just return false
 	invalidPatterns := []string{
-		"[",           // unclosed bracket
-		"[*",          // invalid bracket pattern
-		"???",         // valid but tests edge case
-		"[a-]",        // invalid range
+		"[",    // unclosed bracket
+		"[*",   // invalid bracket pattern
+		"???",  // valid but tests edge case
+		"[a-]", // invalid range
 	}
 
 	for _, pattern := range invalidPatterns {

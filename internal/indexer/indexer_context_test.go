@@ -12,7 +12,7 @@ import (
 func TestComputeFileHashContextCancellation(t *testing.T) {
 	// Create a temporary directory
 	tmpDir := t.TempDir()
-	
+
 	// Create a large test file (enough that hashing takes measurable time)
 	testFile := filepath.Join(tmpDir, "large_test_file.txt")
 	data := make([]byte, 10*1024*1024) // 10MB file
@@ -29,11 +29,11 @@ func TestComputeFileHashContextCancellation(t *testing.T) {
 
 	// Attempt to hash of file - should return error due to cancelled context
 	hash, err := computeFileHash(ctx, testFile)
-	
+
 	if err == nil {
 		t.Error("Expected error due to cancelled context, got nil")
 	}
-	
+
 	if hash != "" {
 		t.Errorf("Expected empty hash due to cancelled context, got %s", hash)
 	}
@@ -47,7 +47,7 @@ func TestComputeFileHashContextCancellation(t *testing.T) {
 func TestComputeFileHashNormalOperation(t *testing.T) {
 	// Create a temporary directory
 	tmpDir := t.TempDir()
-	
+
 	// Create a test file
 	testFile := filepath.Join(tmpDir, "test_file.txt")
 	testContent := "Hello, World! This is a test file."
@@ -61,11 +61,11 @@ func TestComputeFileHashNormalOperation(t *testing.T) {
 
 	// Hash of file
 	hash, err := computeFileHash(ctx, testFile)
-	
+
 	if err != nil {
 		t.Fatalf("Unexpected error computing hash: %v", err)
 	}
-	
+
 	if hash == "" {
 		t.Error("Expected non-empty hash, got empty string")
 	}
@@ -81,7 +81,7 @@ func TestComputeFileHashNormalOperation(t *testing.T) {
 func TestComputeFileHashCancellationDuringHash(t *testing.T) {
 	// Create a temporary directory
 	tmpDir := t.TempDir()
-	
+
 	// Create a large test file
 	testFile := filepath.Join(tmpDir, "very_large_test_file.txt")
 	data := make([]byte, 50*1024*1024) // 50MB file
@@ -102,7 +102,7 @@ func TestComputeFileHashCancellationDuringHash(t *testing.T) {
 	startTime := time.Now()
 	hash, err := computeFileHash(ctx, testFile)
 	elapsed := time.Since(startTime)
-	
+
 	// Operation should either:
 	// 1. Complete successfully (if timeout is long enough)
 	// 2. Return context.Canceled error (if timeout triggers mid-operation)

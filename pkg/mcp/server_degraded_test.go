@@ -83,7 +83,7 @@ func TestServerNilEmbedding(t *testing.T) {
 	// Create server config without LLM/embedding
 	cfg := ServerConfig{
 		LLM:    &mockLLM{},
-		Config:  nil,
+		Config: nil,
 	}
 
 	server := NewServer(cfg)
@@ -123,7 +123,7 @@ func (m *mockLLM) Close() error {
 func TestWatcherGoroutineLifecycle(t *testing.T) {
 	// Create server with minimal config
 	cfg := ServerConfig{
-		LLM:   &mockLLM{},
+		LLM:    &mockLLM{},
 		Config: nil, // Will cause initializeIndexer to fail, which is fine for this test
 	}
 

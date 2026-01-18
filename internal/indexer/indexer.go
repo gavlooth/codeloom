@@ -290,12 +290,11 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 		return nil
 	}
 
-
 	// Parse all changed files first, storing results per-file
 	type fileParseResult struct {
-		nodes  []parser.CodeNode
-		edges  []parser.CodeEdge
-		err    error
+		nodes []parser.CodeNode
+		edges []parser.CodeEdge
+		err   error
 	}
 	fileResults := make(map[string]fileParseResult)
 	fileNodeCounts := make(map[string]int)

@@ -14,51 +14,51 @@ func TestMigrationErrorLogging(t *testing.T) {
 
 	// Test various error messages that should be handled differently
 	testCases := []struct {
-		name         string
+		name        string
 		errorMsg    string
-		shouldLog    bool
-		description  string
+		shouldLog   bool
+		description string
 	}{
 		{
-			name:      "already defined table",
-			errorMsg:  "table 'nodes' already defined",
-			shouldLog: false,
+			name:        "already defined table",
+			errorMsg:    "table 'nodes' already defined",
+			shouldLog:   false,
 			description: "Benign: table already exists, should not log",
 		},
 		{
-			name:      "already exists index",
-			errorMsg:  "index 'idx_nodes_id' already exists",
-			shouldLog: false,
+			name:        "already exists index",
+			errorMsg:    "index 'idx_nodes_id' already exists",
+			shouldLog:   false,
 			description: "Benign: index already exists, should not log",
 		},
 		{
-			name:      "duplicate index",
-			errorMsg:  "Duplicate index: idx_nodes_id",
-			shouldLog: false,
+			name:        "duplicate index",
+			errorMsg:    "Duplicate index: idx_nodes_id",
+			shouldLog:   false,
 			description: "Benign: duplicate index, should not log",
 		},
 		{
-			name:      "permission denied",
-			errorMsg:  "permission denied to create table",
-			shouldLog: true,
+			name:        "permission denied",
+			errorMsg:    "permission denied to create table",
+			shouldLog:   true,
 			description: "Severe: permission issue, should log warning",
 		},
 		{
-			name:      "connection failed",
-			errorMsg:  "connection to database failed: timeout",
-			shouldLog: true,
+			name:        "connection failed",
+			errorMsg:    "connection to database failed: timeout",
+			shouldLog:   true,
 			description: "Severe: connection issue, should log warning",
 		},
 		{
-			name:      "syntax error",
-			errorMsg:  "syntax error at position 10",
-			shouldLog: true,
+			name:        "syntax error",
+			errorMsg:    "syntax error at position 10",
+			shouldLog:   true,
 			description: "Severe: invalid syntax, should log warning",
 		},
 		{
-			name:      "unknown table error",
-			errorMsg:  "failed to create table: internal error",
-			shouldLog: true,
+			name:        "unknown table error",
+			errorMsg:    "failed to create table: internal error",
+			shouldLog:   true,
 			description: "Severe: unknown error, should log warning",
 		},
 	}

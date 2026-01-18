@@ -40,13 +40,13 @@ func TestEdgeIDGeneration(t *testing.T) {
 		// Simulate the ID generation pattern used in graph.FormatEdgeID
 		// After fix: fmt.Sprintf("%s->%s:%s", edge.FromID, edge.ToID, edge.EdgeType)
 		id := generateEdgeID(edge)
-		
+
 		if ids[id] {
 			t.Errorf("Edge ID collision detected: %s\n  Edge: %+v", id, edge)
 		}
 		ids[id] = true
-		
-		t.Logf("Edge %s %s->%s -> ID: %s", 
+
+		t.Logf("Edge %s %s->%s -> ID: %s",
 			edge.EdgeType, edge.FromID, edge.ToID, id)
 	}
 
@@ -62,25 +62,25 @@ func TestEdgeIDFormat(t *testing.T) {
 		from     string
 		to       string
 		edgeType parser.EdgeType
-		want      string
+		want     string
 	}{
 		{
 			from:     "file.go::funcA",
 			to:       "file.go::funcB",
 			edgeType: parser.EdgeTypeCalls,
-			want:      "file.go::funcA->file.go::funcB:calls",
+			want:     "file.go::funcA->file.go::funcB:calls",
 		},
 		{
 			from:     "file.go::funcA",
 			to:       "file.go::funcB",
 			edgeType: parser.EdgeTypeUses,
-			want:      "file.go::funcA->file.go::funcB:uses",
+			want:     "file.go::funcA->file.go::funcB:uses",
 		},
 		{
 			from:     "file.go::funcA",
 			to:       "file.go::funcB",
 			edgeType: parser.EdgeTypeImports,
-			want:      "file.go::funcA->file.go::funcB:imports",
+			want:     "file.go::funcA->file.go::funcB:imports",
 		},
 	}
 
@@ -90,7 +90,7 @@ func TestEdgeIDFormat(t *testing.T) {
 			ToID:     tt.to,
 			EdgeType: tt.edgeType,
 		}
-		
+
 		got := generateEdgeID(edge)
 		if got != tt.want {
 			t.Errorf("generateEdgeID(%+v) = %q, want %q", edge, got, tt.want)
@@ -103,4 +103,3 @@ func generateEdgeID(edge parser.CodeEdge) string {
 	// This mirrors pattern in graph.FormatEdgeID
 	return graph.FormatEdgeID(edge.FromID, edge.ToID, graph.EdgeType(edge.EdgeType))
 }
-

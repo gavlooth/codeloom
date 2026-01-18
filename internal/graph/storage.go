@@ -1146,7 +1146,6 @@ func (s *Storage) UpdateFileAtomic(ctx context.Context, filePath string, nodes [
 	// The caller (indexer) will call UpsertFileMetadata after this function completes
 	// This ensures metadata is never left in an inconsistent state
 
-
 	// Prepare data outside the transaction to avoid variable scope issues
 	var nodeData []map[string]any
 	var edgeData []map[string]any

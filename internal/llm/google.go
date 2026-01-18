@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/generative-ai-go/genai"
 	"github.com/heefoo/codeloom/internal/config"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
@@ -291,6 +292,9 @@ func (p *GoogleProvider) Stream(ctx context.Context, messages []Message, opts ..
 				return
 			default:
 				resp, err := iter.Next()
+				if err == iterator.Done {
+					return
+				}
 				if err != nil {
 					log.Printf("google stream error: %v", err)
 					return
