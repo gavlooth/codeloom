@@ -1159,9 +1159,10 @@ func truncateContent(content string, maxLen int) string {
 // CODE GRAPH CONTEXT HELPERS
 // ==========================================================================
 
-// gatherCodeContext searches the code graph and returns relevant code snippets
+// gatherCodeContext searches for relevant code using semantic search when available,
+// or falls back to name-based search when embeddings are disabled
 func (s *Server) gatherCodeContext(ctx context.Context, query string, limit int) string {
-	if s.storage == nil || s.embedding == nil {
+	if s.storage == nil {
 		return "(Code graph not initialized. Run codeloom_index first.)"
 	}
 
@@ -1169,52 +1170,73 @@ func (s *Server) gatherCodeContext(ctx context.Context, query string, limit int)
 		limit = 5
 	}
 
-	// Generate embedding for query
-	queryEmb, err := s.embedding.EmbedSingle(ctx, query)
-	if err != nil {
-		return fmt.Sprintf("(Failed to search code graph: %v)", err)
-	}
-
-	// Search for relevant code
-	nodes, err := s.storage.SemanticSearch(ctx, queryEmb, limit)
-	if err != nil {
-		return fmt.Sprintf("(Search error: %v)", err)
-	}
-
-	if len(nodes) == 0 {
-		return "(No relevant code found in the indexed codebase.)"
-	}
-
-	var sb strings.Builder
-	for i, node := range nodes {
-		sb.WriteString(fmt.Sprintf("### %d. %s (%s)\n", i+1, node.Name, node.NodeType))
-		sb.WriteString(fmt.Sprintf("File: %s:%d-%d\n", node.FilePath, node.StartLine, node.EndLine))
-		sb.WriteString(fmt.Sprintf("Language: %s\n", node.Language))
-		if node.DocComment != "" {
-			sb.WriteString(fmt.Sprintf("Doc: %s\n", truncateContent(node.DocComment, 200)))
+	// Try semantic search first if embeddings are available
+	if s.embedding != nil {
+		// Generate embedding for query
+		queryEmb, err := s.embedding.EmbedSingle(ctx, query)
+		if err != nil {
+			// Fall back to name-based search if embedding fails
+			return s.gatherCodeContextByName(ctx, query, limit)
 		}
-		sb.WriteString("```\n")
-		sb.WriteString(truncateContent(node.Content, 1000))
-		sb.WriteString("\n```\n\n")
+
+		// Search for relevant code
+		nodes, err := s.storage.SemanticSearch(ctx, queryEmb, limit)
+		if err != nil {
+			// Fall back to name-based search on error
+			return s.gatherCodeContextByName(ctx, query, limit)
+		}
+
+		if len(nodes) == 0 {
+			return "(No relevant code found in indexed codebase.)"
+		}
+
+		return s.formatCodeNodes(nodes)
 	}
-	return sb.String()
+
+	// No embeddings available - use name-based search
+	return s.gatherCodeContextByName(ctx, query, limit)
 }
 
 // gatherDependencyContext gets dependency information for impact analysis
+// Works with or without embeddings by using name-based search as fallback
 func (s *Server) gatherDependencyContext(ctx context.Context, query string) string {
-	if s.storage == nil || s.embedding == nil {
+	if s.storage == nil {
 		return "(Code graph not initialized.)"
 	}
 
-	// First find relevant nodes
-	queryEmb, err := s.embedding.EmbedSingle(ctx, query)
-	if err != nil {
-		return ""
+	// Find relevant nodes using semantic search if available, or name-based search otherwise
+	var nodes []graph.CodeNode
+	var err error
+
+	if s.embedding != nil {
+		// Try semantic search first
+		queryEmb, embedErr := s.embedding.EmbedSingle(ctx, query)
+		if embedErr == nil {
+			nodes, err = s.storage.SemanticSearch(ctx, queryEmb, 3)
+		}
 	}
 
-	nodes, err := s.storage.SemanticSearch(ctx, queryEmb, 3)
-	if err != nil || len(nodes) == 0 {
+	// Fall back to name-based search if no embeddings or semantic search failed
+	if len(nodes) == 0 {
+		potentialNames := s.extractPotentialNames(query)
+		for _, name := range potentialNames {
+			nameNodes, nameErr := s.storage.FindByName(ctx, name)
+			if nameErr == nil {
+				nodes = append(nodes, nameNodes...)
+			}
+			// Limit to 3 total nodes to avoid overwhelming output
+			if len(nodes) >= 3 {
+				break
+			}
+		}
+	}
+
+	if err != nil && len(nodes) == 0 {
 		return "(No dependency information available.)"
+	}
+
+	if len(nodes) == 0 {
+		return "(No matching code found for dependency analysis. Semantic search is not available - embeddings are disabled.)"
 	}
 
 	var sb strings.Builder
@@ -1243,7 +1265,7 @@ func (s *Server) gatherDependencyContext(ctx context.Context, query string) stri
 	}
 
 	if sb.Len() == len("### Dependencies Analysis\n\n") {
-		return "(No dependency relationships found.)"
+		return "(No dependency relationships found for the matching code.)"
 	}
 	return sb.String()
 }
@@ -1426,4 +1448,78 @@ func (s *Server) Close() error {
 		return errs[0]
 	}
 	return nil
+}
+
+// gatherCodeContextByName searches for code by name (embedding-agnostic fallback)
+func (s *Server) gatherCodeContextByName(ctx context.Context, query string, limit int) string {
+	// Extract potential function/class names from query
+	// This is a simple heuristic - look for words that might be identifiers
+	potentialNames := s.extractPotentialNames(query)
+
+	var allNodes []graph.CodeNode
+	for _, name := range potentialNames {
+		// Search for nodes matching this name
+		nodes, err := s.storage.FindByName(ctx, name)
+		if err != nil {
+			continue
+		}
+		allNodes = append(allNodes, nodes...)
+	}
+
+	// Deduplicate by ID
+	seen := make(map[string]bool)
+	var uniqueNodes []graph.CodeNode
+	for _, node := range allNodes {
+		if !seen[node.ID] {
+			seen[node.ID] = true
+			uniqueNodes = append(uniqueNodes, node)
+		}
+	}
+
+	if len(uniqueNodes) == 0 {
+		return "(No matching code found by name. Semantic search is not available - embeddings are disabled. Re-index with embeddings enabled for better search results.)"
+	}
+
+	// Limit results
+	if len(uniqueNodes) > limit {
+		uniqueNodes = uniqueNodes[:limit]
+	}
+
+	return s.formatCodeNodes(uniqueNodes)
+}
+
+// extractPotentialNames extracts potential identifier names from a query string
+func (s *Server) extractPotentialNames(query string) []string {
+	// Simple heuristic: split query and look for capitalized words or camelCase
+	// This is a basic implementation that can be improved
+	var names []string
+	words := strings.Fields(query)
+	for _, word := range words {
+		// Skip very short words and common non-identifier words
+		if len(word) < 3 || strings.ContainsAny(word, ".,!?()[]{};:\\\"'") {
+			continue
+		}
+		// Check if it looks like an identifier (has uppercase or camelCase)
+		if strings.ContainsAny(word, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") || strings.Contains(word, "_") {
+			names = append(names, strings.Trim(word, ",.!?()[]{};:\\\"'"))
+		}
+	}
+	return names
+}
+
+// formatCodeNodes formats code nodes for display
+func (s *Server) formatCodeNodes(nodes []graph.CodeNode) string {
+	var sb strings.Builder
+	for i, node := range nodes {
+		sb.WriteString(fmt.Sprintf("### %d. %s (%s)\n", i+1, node.Name, node.NodeType))
+		sb.WriteString(fmt.Sprintf("File: %s:%d-%d\n", node.FilePath, node.StartLine, node.EndLine))
+		sb.WriteString(fmt.Sprintf("Language: %s\n", node.Language))
+		if node.DocComment != "" {
+			sb.WriteString(fmt.Sprintf("Doc: %s\n", truncateContent(node.DocComment, 200)))
+		}
+		sb.WriteString("```\n")
+		sb.WriteString(truncateContent(node.Content, 1000))
+		sb.WriteString("\n```\n\n")
+	}
+	return sb.String()
 }
