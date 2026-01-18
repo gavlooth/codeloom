@@ -284,14 +284,34 @@ func (p *OllamaProvider) Stream(ctx context.Context, messages []Message, opts ..
 		defer resp.Body.Close()
 
 		scanner := bufio.NewScanner(resp.Body)
-		for scanner.Scan() {
+		for {
+			// Check for context cancellation at loop start
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			if !scanner.Scan() {
+				// Check for scanner errors
+				if err := scanner.Err(); err != nil {
+					log.Printf("ollama stream error: scanner error: %v", err)
+				}
+				return
+			}
+
 			var chatResp ollamaChatResponse
 			if err := json.Unmarshal(scanner.Bytes(), &chatResp); err != nil {
 				log.Printf("ollama stream error: failed to unmarshal JSON: %v", err)
 				continue
 			}
 			if chatResp.Message.Content != "" {
-				ch <- chatResp.Message.Content
+				// Non-blocking send with context check
+				select {
+				case ch <- chatResp.Message.Content:
+				case <-ctx.Done():
+					return
+				}
 			}
 			if chatResp.Done {
 				return
