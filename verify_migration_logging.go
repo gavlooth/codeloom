@@ -9,7 +9,8 @@ import (
 // It shows how different error types are handled before and after the fix
 
 func main() {
-	fmt.Println("=== Migration Error Handling Verification ===\n")
+	fmt.Println("=== Migration Error Handling Verification ===")
+	fmt.Println()
 
 	// Test cases demonstrating different error scenarios
 	testErrors := []struct {
@@ -64,7 +65,8 @@ func main() {
 		},
 	}
 
-	fmt.Println("Testing error handling logic:\n")
+	fmt.Println("Testing error handling logic:")
+	fmt.Println()
 
 	for i, tc := range testErrors {
 		// Simulate the new error handling logic
