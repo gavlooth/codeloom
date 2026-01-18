@@ -15,6 +15,7 @@ var (
 type clientEntry struct {
 	client    *http.Client
 	timestamp time.Time
+	timeoutKey int64
 	element   *list.Element
 }
 
@@ -85,6 +86,7 @@ func GetSharedClient(timeout time.Duration) *http.Client {
 	newEntry := &clientEntry{
 		client:    client,
 		timestamp: time.Now(),
+		timeoutKey: timeoutKey,
 	}
 
 	// Add to cache with LRU eviction
@@ -106,13 +108,9 @@ func GetSharedClient(timeout time.Duration) *http.Client {
 	for cache.ll.Len() > cache.maxSize {
 		oldest := cache.ll.Back()
 		if oldest != nil {
-			// Remove from entries map (need to iterate to find key)
-			for k, v := range cache.entries {
-				if v == oldest {
-					delete(cache.entries, k)
-					break
-				}
-			}
+			// Remove from entries map using stored timeoutKey
+			oldestEntry := oldest.Value.(*clientEntry)
+			delete(cache.entries, oldestEntry.timeoutKey)
 			// Remove from list
 			cache.ll.Remove(oldest)
 		}
@@ -154,12 +152,8 @@ func SetMaxCacheSize(size int) {
 	for cache.ll.Len() > cache.maxSize {
 		oldest := cache.ll.Back()
 		if oldest != nil {
-			for k, v := range cache.entries {
-				if v == oldest {
-					delete(cache.entries, k)
-					break
-				}
-			}
+			oldestEntry := oldest.Value.(*clientEntry)
+			delete(cache.entries, oldestEntry.timeoutKey)
 			cache.ll.Remove(oldest)
 		}
 	}

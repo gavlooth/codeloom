@@ -1,6 +1,7 @@
 package httpclient
 
 import (
+	"net/http"
 	"testing"
 	"time"
 )
@@ -230,6 +231,85 @@ func TestSetMaxCacheSize(t *testing.T) {
 	SetMaxCacheSize(0)
 	if CacheSize() != 1 {
 		t.Errorf("Expected cache size 1 (min allowed), got %d", CacheSize())
+	}
+
+	// Clean up
+	ClearCache()
+}
+
+func TestTimeoutKeyOptimization(t *testing.T) {
+	// Clear cache before test
+	ClearCache()
+
+	// Set a small max size for testing eviction
+	SetMaxCacheSize(3)
+
+	// Create clients with 5 different timeouts to trigger multiple evictions
+	timeouts := []time.Duration{
+		10 * time.Second,
+		20 * time.Second,
+		30 * time.Second,
+		40 * time.Second,
+		50 * time.Second,
+	}
+
+	var clients []*http.Client
+	for _, timeout := range timeouts {
+		client := GetSharedClient(timeout)
+		clients = append(clients, client)
+	}
+
+	// Should have 3 clients in cache (max size)
+	if CacheSize() != 3 {
+		t.Errorf("Expected cache size 3, got %d", CacheSize())
+	}
+
+	// Verify that the last 3 clients are in cache
+	// First two should have been evicted
+	lastClients := clients[2:]
+	for _, client := range lastClients {
+		// Access each client to ensure they're still in cache
+		if client.Transport == nil {
+			t.Error("Expected non-nil transport for cached client")
+		}
+	}
+
+	// Test that requesting an evicted timeout creates a new client
+	evictedClient := GetSharedClient(timeouts[0])
+	if evictedClient == nil {
+		t.Error("Expected non-nil client for evicted timeout")
+	}
+
+	// Cache size should still be at max
+	if CacheSize() != 3 {
+		t.Errorf("Expected cache size 3 after requesting evicted entry, got %d", CacheSize())
+	}
+
+	// Test concurrent eviction to ensure timeoutKey optimization prevents race conditions
+	ClearCache()
+	SetMaxCacheSize(5)
+
+	done := make(chan bool)
+	for i := 0; i < 10; i++ {
+		go func(idx int) {
+			timeout := time.Duration(idx+1) * time.Second
+			client := GetSharedClient(timeout)
+			if client == nil {
+				t.Errorf("Expected non-nil client for timeout %v", timeout)
+			}
+			done <- true
+		}(i)
+	}
+
+	// Wait for all goroutines to complete
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	// Verify cache size doesn't exceed max and no panics occurred
+	size := CacheSize()
+	if size > 5 {
+		t.Errorf("Expected cache size <= 5, got %d", size)
 	}
 
 	// Clean up

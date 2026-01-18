@@ -133,6 +133,21 @@ func StoreNodesBatch(
 		go func() {
 			defer wg.Done()
 			for batch := range workCh {
+				// Check for context cancellation before processing batch
+				// This allows graceful shutdown and avoids wasting resources on embeddings
+				// that are no longer needed
+				select {
+				case <-ctx.Done():
+					// Context cancelled, skip this batch processing
+					resultCh <- embeddingResult{
+						batchIndex: batch.batchIndex,
+						embeddings: nil,
+						err:        ctx.Err(),
+					}
+					continue
+				default:
+				}
+
 				var embeddings [][]float32
 				var err error
 
@@ -175,6 +190,14 @@ func StoreNodesBatch(
 	// Now store all nodes with embeddings (sequential DB writes for consistency)
 	var processedCount int32
 	for i, batch := range batches {
+		// Check for context cancellation before storing each batch
+		select {
+		case <-ctx.Done():
+			// Context cancelled, stop storing
+			return ctx.Err()
+		default:
+		}
+
 		embeddings := embeddingResults[i]
 		textIndices := textIndicesResults[i]
 
