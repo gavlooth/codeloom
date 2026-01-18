@@ -143,11 +143,23 @@ func (p *OllamaProvider) Embed(ctx context.Context, texts []string) ([][]float32
 
 	wg.Wait()
 
-	// Check for errors
+	// Check for errors - return partial results with error if any failed
+	var firstError error
+	errorCount := 0
 	for i, err := range errors {
 		if err != nil {
-			return nil, fmt.Errorf("failed to embed text %d: %w", i, err)
+			if firstError == nil {
+				firstError = fmt.Errorf("failed to embed text %d: %w", i, err)
+			}
+			errorCount++
 		}
+	}
+
+	// Return partial results with error if any failed, but not if all failed
+	if errorCount > 0 && errorCount < len(texts) {
+		return embeddings, firstError
+	} else if errorCount == len(texts) {
+		return nil, firstError
 	}
 
 	return embeddings, nil
