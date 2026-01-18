@@ -109,7 +109,7 @@ type fileInfo struct {
 }
 
 // computeFileHash computes SHA256 hash of file content
-func computeFileHash(filePath string) (string, error) {
+func computeFileHash(ctx context.Context, filePath string) (string, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return "", err
@@ -117,8 +117,25 @@ func computeFileHash(filePath string) (string, error) {
 	defer f.Close()
 
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
+
+	// Use a buffered reader with context checking
+	buf := make([]byte, 32*1024) // 32KB buffer
+	for {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+
+		n, err := f.Read(buf)
+		if err != nil && err != io.EOF {
+			return "", err
+		}
+		if n == 0 {
+			break
+		}
+		h.Write(buf[:n])
 	}
 
 	return hex.EncodeToString(h.Sum(nil)), nil
@@ -206,7 +223,7 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 		// Check modification time first (fast check)
 		if info.ModTime().Unix() != existing.ModTime {
 			// Mod time changed, compute hash to verify
-			hash, err := computeFileHash(path)
+			hash, err := computeFileHash(ctx, path)
 			if err != nil {
 				log.Printf("Warning: could not hash file %s: %v", path, err)
 				changedFiles = append(changedFiles, path)
@@ -388,7 +405,7 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 			continue
 		}
 
-		hash, err := computeFileHash(filePath)
+		hash, err := computeFileHash(ctx, filePath)
 		if err != nil {
 			log.Printf("Warning: failed to hash %s: %v", filePath, err)
 			continue
