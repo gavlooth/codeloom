@@ -221,7 +221,7 @@ func (w *Watcher) processPending(ctx context.Context) {
 	// Process files
 	for _, path := range toProcess {
 		if strings.HasSuffix(path, "|DELETE") {
-			w.handleDelete(strings.TrimSuffix(path, "|DELETE"))
+			w.handleDelete(ctx, strings.TrimSuffix(path, "|DELETE"))
 		} else {
 			if err := w.indexFile(ctx, path); err != nil {
 				log.Printf("Failed to index %s: %v", path, err)
@@ -308,10 +308,10 @@ func (w *Watcher) indexFile(ctx context.Context, path string) error {
 	return nil
 }
 
-func (w *Watcher) handleDelete(path string) {
+func (w *Watcher) handleDelete(ctx context.Context, path string) {
 	// Use a timeout context to avoid blocking indefinitely
 	// This matches the timeout protection used in indexFile
-	indexCtx, cancel := context.WithTimeout(context.Background(), time.Duration(w.indexTimeoutMs.Load())*time.Millisecond)
+	indexCtx, cancel := context.WithTimeout(ctx, time.Duration(w.indexTimeoutMs.Load())*time.Millisecond)
 	defer cancel()
 
 	if path == "" {
