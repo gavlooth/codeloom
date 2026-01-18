@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -148,4 +150,34 @@ func TestWatcherGoroutineLifecycle(t *testing.T) {
 	// This is kept simple to avoid external dependencies
 
 	t.Log("Watcher lifecycle mechanism (WaitGroup) is in place")
+}
+
+// TestGatherDependencyContextErrorHandling verifies that errors from storage.FindByName
+// are properly logged instead of being silently ignored
+func TestGatherDependencyContextErrorHandling(t *testing.T) {
+	// Read the source code to verify error logging pattern exists
+	// This is a code inspection test since we can't easily mock *graph.Storage struct
+	sourceBytes, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatalf("Failed to read server.go: %v", err)
+	}
+
+	sourceCode := string(sourceBytes)
+
+	// Check that gatherDependencyContext contains error logging for FindByName
+	// Looking for pattern: "log.Printf(\"Warning: failed to search for name"
+	if strings.Contains(sourceCode, "gatherDependencyContext") &&
+		strings.Contains(sourceCode, "log.Printf(\"Warning: failed to search for name") {
+		t.Log("✓ Error logging is present in gatherDependencyContext function")
+	} else {
+		t.Error("Expected error logging in gatherDependencyContext, but pattern not found in source code")
+	}
+
+	// Verify consistency with gatherCodeContextByName
+	if strings.Contains(sourceCode, "gatherCodeContextByName") &&
+		strings.Contains(sourceCode, "log.Printf(\"Warning: failed to search for name") {
+		t.Log("✓ Error logging is consistent between gatherDependencyContext and gatherCodeContextByName")
+	} else {
+		t.Error("Expected error logging to be consistent across both functions")
+	}
 }

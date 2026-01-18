@@ -1278,9 +1278,13 @@ func (s *Server) gatherDependencyContext(ctx context.Context, query string) stri
 		potentialNames := s.extractPotentialNames(query)
 		for _, name := range potentialNames {
 			nameNodes, nameErr := s.storage.FindByName(ctx, name)
-			if nameErr == nil {
-				nodes = append(nodes, nameNodes...)
+			if nameErr != nil {
+				// Log error but continue trying other names
+				// This allows partial results instead of failing completely
+				log.Printf("Warning: failed to search for name '%s' in dependency context: %v", name, nameErr)
+				continue
 			}
+			nodes = append(nodes, nameNodes...)
 			// Limit to 3 total nodes to avoid overwhelming output
 			if len(nodes) >= 3 {
 				break
