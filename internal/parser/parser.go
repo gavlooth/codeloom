@@ -1539,19 +1539,31 @@ func (p *Parser) extractFunctionName(node *sitter.Node, content []byte) string {
 	return ""
 }
 
+// matchPattern wraps filepath.Match with proper error logging
+// Returns true if pattern matches name, false otherwise
+// Logs any pattern errors to help users fix malformed patterns
+func matchPattern(pattern, name string) bool {
+	matched, err := filepath.Match(pattern, name)
+	if err != nil {
+		fmt.Printf("Warning: invalid pattern '%s': %v. Pattern will not match any files.\n", pattern, err)
+		return false
+	}
+	return matched
+}
+
 // shouldExclude checks if a path should be excluded based on patterns
 // Matches against directory name and also checks if any path component matches
 func shouldExclude(path string, name string, excludePatterns []string) bool {
 	for _, pattern := range excludePatterns {
 		// Direct match against directory/file name
-		if matched, _ := filepath.Match(pattern, name); matched {
+		if matchPattern(pattern, name) {
 			return true
 		}
 		// Also check if pattern appears as a path component
 		// This handles cases like "node_modules" appearing anywhere in the path
 		pathParts := strings.Split(filepath.ToSlash(path), "/")
 		for _, part := range pathParts {
-			if matched, _ := filepath.Match(pattern, part); matched {
+			if matchPattern(pattern, part) {
 				return true
 			}
 		}

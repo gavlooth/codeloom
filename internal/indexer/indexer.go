@@ -94,6 +94,18 @@ func DefaultExcludePatterns() []string {
 	}
 }
 
+// matchPattern wraps filepath.Match with proper error logging
+// Returns true if pattern matches name, false otherwise
+// Logs any pattern errors to help users fix malformed patterns
+func matchPattern(pattern, name string) bool {
+	matched, err := filepath.Match(pattern, name)
+	if err != nil {
+		log.Printf("Warning: invalid pattern '%s': %v. Pattern will not match any files.", pattern, err)
+		return false
+	}
+	return matched
+}
+
 // GetStatus returns the current indexing status
 func (idx *Indexer) GetStatus() Status {
 	idx.mu.RLock()
@@ -198,7 +210,7 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 		// Skip directories and apply exclude patterns
 		if info.IsDir() {
 			for _, pattern := range idx.excludePatterns {
-				if matched, _ := filepath.Match(pattern, info.Name()); matched {
+				if matchPattern(pattern, info.Name()) {
 					return filepath.SkipDir
 				}
 			}

@@ -70,6 +70,18 @@ func NewWatcher(cfg WatcherConfig) (*Watcher, error) {
 	return w, nil
 }
 
+// matchPattern wraps filepath.Match with proper error logging
+// Returns true if pattern matches name, false otherwise
+// Logs any pattern errors to help users fix malformed patterns
+func matchPattern(pattern, name string) bool {
+	matched, err := filepath.Match(pattern, name)
+	if err != nil {
+		log.Printf("Warning: invalid pattern '%s': %v. Pattern will not match any files.", pattern, err)
+		return false
+	}
+	return matched
+}
+
 func (w *Watcher) Watch(ctx context.Context, dirs []string) error {
 	// Add directories to watch
 	for _, dir := range dirs {
@@ -130,7 +142,7 @@ func (w *Watcher) shouldExclude(path string) bool {
 	name := filepath.Base(path)
 	for _, pattern := range w.excludePatterns {
 		// Check if pattern matches the filename/base directory
-		if matched, _ := filepath.Match(pattern, name); matched {
+		if matchPattern(pattern, name) {
 			return true
 		}
 		// Check if pattern matches any path component
@@ -138,7 +150,7 @@ func (w *Watcher) shouldExclude(path string) bool {
 		currentPath := path
 		for currentPath != "." && currentPath != "/" {
 			base := filepath.Base(currentPath)
-			if matched, _ := filepath.Match(pattern, base); matched {
+			if matchPattern(pattern, base) {
 				return true
 			}
 			currentPath = filepath.Dir(currentPath)
