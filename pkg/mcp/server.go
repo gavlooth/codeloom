@@ -1122,6 +1122,9 @@ func (s *Server) handleWatch(ctx context.Context, request mcp.CallToolRequest) (
 		s.watchDirs = nil
 		s.mu.Unlock()
 
+		// Wait for watcher goroutine to finish before returning
+		s.watchWg.Wait()
+
 		result := map[string]interface{}{
 			"status":              "stopped",
 			"previously_watching": watchedDirs,

@@ -271,3 +271,49 @@ func TestTypeAssertionSafety(t *testing.T) {
 
 	t.Log("All handler functions use safe type assertions")
 }
+
+// TestWatcherStopWaitsForGoroutine verifies that the 'stop' action waits for
+// the watcher goroutine to finish before returning, preventing race conditions
+// when stopping and starting watchers in quick succession
+func TestWatcherStopWaitsForGoroutine(t *testing.T) {
+	// Read the source code to verify the stop action properly waits
+	sourceBytes, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatalf("Failed to read server.go: %v", err)
+	}
+
+	sourceCode := string(sourceBytes)
+
+	// Find the 'stop' case in handleWatch function
+	// Looking for pattern where watchWg.Wait() is called after stopping watcher
+	stopCaseStart := strings.Index(sourceCode, `case "stop":`)
+	if stopCaseStart == -1 {
+		t.Fatal("Could not find 'stop' case in handleWatch function")
+	}
+
+	// Extract a reasonable portion (next 2000 chars should cover the stop case)
+	stopCaseEnd := stopCaseStart + 2000
+	if stopCaseEnd > len(sourceCode) {
+		stopCaseEnd = len(sourceCode)
+	}
+	stopCaseCode := sourceCode[stopCaseStart:stopCaseEnd]
+
+	// Verify that watchWg.Wait() is present in the stop case
+	if !strings.Contains(stopCaseCode, "s.watchWg.Wait()") {
+		t.Error("Expected to find s.watchWg.Wait() in 'stop' action to ensure goroutine cleanup")
+	} else {
+		t.Log("✓ s.watchWg.Wait() is present in 'stop' action")
+	}
+
+	// Verify that watchWg.Wait() is called after unlocking the mutex
+	// Pattern: s.mu.Unlock() followed by s.watchWg.Wait()
+	muUnlockPos := strings.Index(stopCaseCode, "s.mu.Unlock()")
+	wgWaitPos := strings.Index(stopCaseCode, "s.watchWg.Wait()")
+	if muUnlockPos != -1 && wgWaitPos != -1 && wgWaitPos > muUnlockPos {
+		t.Log("✓ watchWg.Wait() is called after unlocking mutex (correct pattern)")
+	} else if muUnlockPos != -1 && wgWaitPos != -1 {
+		t.Error("watchWg.Wait() should be called after s.mu.Unlock() to avoid blocking with mutex held")
+	} else {
+		t.Log("Could not verify mutex unlock/wait order (may need manual verification)")
+	}
+}
