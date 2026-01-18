@@ -1008,7 +1008,7 @@ func (s *Server) handleWatch(ctx context.Context, request mcp.CallToolRequest) (
 			Storage:         s.storage,
 			Embedding:       s.embedding,
 			ExcludePatterns: indexer.DefaultExcludePatterns(),
-			DebounceMs:      100,
+			DebounceMs:      s.config.Server.WatcherDebounceMs,
 		})
 		if err != nil {
 			s.mu.Unlock()

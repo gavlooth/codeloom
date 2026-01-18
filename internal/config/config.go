@@ -50,8 +50,9 @@ type SurrealDBConfig struct {
 }
 
 type ServerConfig struct {
-	Mode string `toml:"mode"`
-	Port int    `toml:"port"`
+	Mode        string `toml:"mode"`
+	Port        int    `toml:"port"`
+	WatcherDebounceMs int `toml:"watcher_debounce_ms"`
 }
 
 func Load(path string) (*Config, error) {
@@ -113,8 +114,9 @@ func DefaultConfig() *Config {
 			},
 		},
 		Server: ServerConfig{
-			Mode: "stdio",
-			Port: 3003,
+			Mode:        "stdio",
+			Port:        3003,
+			WatcherDebounceMs: 100,
 		},
 	}
 }
@@ -171,6 +173,12 @@ func Validate(cfg *Config) []string {
 	// Validate server settings
 	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
 		warnings = append(warnings, "Server port must be between 1 and 65535")
+	}
+	if cfg.Server.WatcherDebounceMs < 10 {
+		warnings = append(warnings, "Watcher debounce must be at least 10ms")
+	}
+	if cfg.Server.WatcherDebounceMs > 60000 {
+		warnings = append(warnings, "Watcher debounce exceeds reasonable maximum (60000ms)")
 	}
 
 	return warnings
@@ -247,5 +255,12 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("CODELOOM_SURREALDB_PASSWORD"); v != "" {
 		cfg.Database.SurrealDB.Password = v
+	}
+
+	// Server settings
+	if v := os.Getenv("CODELOOM_WATCHER_DEBOUNCE_MS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Server.WatcherDebounceMs = i
+		}
 	}
 }
