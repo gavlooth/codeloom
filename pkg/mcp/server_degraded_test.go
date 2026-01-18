@@ -181,3 +181,93 @@ func TestGatherDependencyContextErrorHandling(t *testing.T) {
 		t.Error("Expected error logging to be consistent across both functions")
 	}
 }
+
+// TestTypeAssertionSafety verifies that all type assertions in handler functions
+// use the safe two-value form instead of the panic-prone single-value form
+func TestTypeAssertionSafety(t *testing.T) {
+	sourceBytes, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatalf("Failed to read server.go: %v", err)
+	}
+
+	sourceCode := string(sourceBytes)
+
+	// List of handler functions that should use safe type assertions
+	handlers := []struct {
+		name     string
+		expected []string // Expected error messages for type assertions
+	}{
+		{
+			name: "handleIndex",
+			expected: []string{
+				"directory argument must be a string",
+			},
+		},
+		{
+			name: "handleSemanticSearch",
+			expected: []string{
+				"query argument must be a string",
+			},
+		},
+		{
+			name: "handleTransitiveDeps",
+			expected: []string{
+				"node_id argument must be a string",
+			},
+		},
+		{
+			name: "handleTraceCallChain",
+			expected: []string{
+				"from argument must be a string",
+				"to argument must be a string",
+			},
+		},
+		{
+			name: "handleWatch",
+			expected: []string{
+				"action argument must be a string",
+			},
+		},
+	}
+
+	// Check each handler for safe type assertions
+	for _, handler := range handlers {
+		t.Run(handler.name, func(t *testing.T) {
+			// Find the handler function in the source code
+			handlerStart := strings.Index(sourceCode, "func (s *Server) "+handler.name+"(")
+			if handlerStart == -1 {
+				t.Fatalf("Could not find handler function %s in source code", handler.name)
+			}
+
+			// Extract a reasonable portion of the function (next 2000 chars should be enough)
+			handlerEnd := handlerStart + 2000
+			if handlerEnd > len(sourceCode) {
+				handlerEnd = len(sourceCode)
+			}
+			handlerCode := sourceCode[handlerStart:handlerEnd]
+
+			// Verify each expected error message is present
+			for _, expectedMsg := range handler.expected {
+				if !strings.Contains(handlerCode, expectedMsg) {
+					t.Errorf("%s: missing safe type assertion check - expected to find error message: %q",
+						handler.name, expectedMsg)
+				} else {
+					t.Logf("%s: ✓ Safe type assertion check found: %q",
+						handler.name, expectedMsg)
+				}
+			}
+
+			// Verify no unsafe type assertions in the form `x, _ := y.(string)`
+			// This pattern indicates the error value is being ignored
+			unsafePattern := ", _ := request.Params.Arguments["
+			if strings.Contains(handlerCode, unsafePattern) {
+				t.Errorf("%s: found unsafe type assertion pattern %q - type assertions should use the safe two-value form",
+					handler.name, unsafePattern)
+			} else {
+				t.Logf("%s: ✓ No unsafe type assertions found", handler.name)
+			}
+		})
+	}
+
+	t.Log("All handler functions use safe type assertions")
+}

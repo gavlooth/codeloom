@@ -467,7 +467,10 @@ type AgenticRequest struct {
 }
 
 func (s *Server) handleIndex(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	dir, _ := request.Params.Arguments["directory"].(string)
+	dir, ok := request.Params.Arguments["directory"].(string)
+	if !ok {
+		return errorResult("directory argument must be a string")
+	}
 	if dir == "" {
 		return errorResult("directory is required")
 	}
@@ -827,12 +830,18 @@ Provide your analysis in this JSON format:
 }
 
 func (s *Server) handleSemanticSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	query, _ := request.Params.Arguments["query"].(string)
+	query, ok := request.Params.Arguments["query"].(string)
+	if !ok {
+		return errorResult("query argument must be a string")
+	}
 	limit := 10
 	if l, ok := request.Params.Arguments["limit"].(float64); ok {
 		limit = int(l)
 	}
-	language, _ := request.Params.Arguments["language"].(string)
+	language := ""
+	if lang, ok := request.Params.Arguments["language"].(string); ok {
+		language = lang
+	}
 
 	// Check if indexer is initialized
 	if s.indexer == nil || s.storage == nil {
@@ -896,7 +905,10 @@ func (s *Server) handleSemanticSearch(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleTransitiveDeps(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	nodeID, _ := request.Params.Arguments["node_id"].(string)
+	nodeID, ok := request.Params.Arguments["node_id"].(string)
+	if !ok {
+		return errorResult("node_id argument must be a string")
+	}
 	depth := 3
 	if d, ok := request.Params.Arguments["depth"].(float64); ok {
 		depth = int(d)
@@ -946,8 +958,14 @@ func (s *Server) handleTransitiveDeps(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleTraceCallChain(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	from, _ := request.Params.Arguments["from"].(string)
-	to, _ := request.Params.Arguments["to"].(string)
+	from, ok := request.Params.Arguments["from"].(string)
+	if !ok {
+		return errorResult("from argument must be a string")
+	}
+	to, ok := request.Params.Arguments["to"].(string)
+	if !ok {
+		return errorResult("to argument must be a string")
+	}
 	maxDepth := 10
 	if d, ok := request.Params.Arguments["max_depth"].(float64); ok {
 		maxDepth = int(d)
@@ -996,7 +1014,10 @@ func (s *Server) handleTraceCallChain(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleWatch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	action, _ := request.Params.Arguments["action"].(string)
+	action, ok := request.Params.Arguments["action"].(string)
+	if !ok {
+		return errorResult("action argument must be a string")
+	}
 
 	switch action {
 	case "start":
