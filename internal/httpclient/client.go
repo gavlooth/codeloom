@@ -96,6 +96,8 @@ func GetSharedClient(timeout time.Duration) *http.Client {
 	if entry, exists := cache.entries[timeoutKey]; exists {
 		cache.ll.MoveToFront(entry)
 		cache.mu.Unlock()
+		// Close the client we created since another goroutine already added one to cache
+		client.CloseIdleConnections()
 		return entry.Value.(*clientEntry).client
 	}
 
