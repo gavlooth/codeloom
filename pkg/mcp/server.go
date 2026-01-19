@@ -503,8 +503,8 @@ func (s *Server) handleIndex(ctx context.Context, request mcp.CallToolRequest) (
 		s.mu.Unlock()
 	}
 
-	// Run indexing with a reasonable timeout
-	indexCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// Run indexing with a reasonable timeout, derived from parent context
+	indexCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 
 	err := s.indexer.IndexDirectory(indexCtx, dir, nil)
@@ -593,15 +593,15 @@ func (s *Server) handleIndexStatus(ctx context.Context, request mcp.CallToolRequ
 	}, nil
 }
 
-func (s *Server) handleAgenticContext(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleAgenticContext(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if s.llm == nil {
 		return errorResult("LLM provider not configured. Set CODELOOM_LLM_PROVIDER and required API keys.")
 	}
 
 	req := parseAgenticRequest(request.Params.Arguments)
 
-	// Use a fresh context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	// Use a fresh context with timeout, derived from parent context
+	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
 	// Get code context from graph if available
@@ -648,14 +648,14 @@ Provide your analysis in this JSON format:
 	}, nil
 }
 
-func (s *Server) handleAgenticImpact(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleAgenticImpact(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if s.llm == nil {
 		return errorResult("LLM provider not configured. Set CODELOOM_LLM_PROVIDER and required API keys.")
 	}
 
 	req := parseAgenticRequest(request.Params.Arguments)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
 	// Get code context and dependency information
@@ -708,14 +708,14 @@ Provide your analysis in this JSON format:
 	}, nil
 }
 
-func (s *Server) handleAgenticArchitecture(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleAgenticArchitecture(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if s.llm == nil {
 		return errorResult("LLM provider not configured. Set CODELOOM_LLM_PROVIDER and required API keys.")
 	}
 
 	req := parseAgenticRequest(request.Params.Arguments)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
 	// Get structural overview of the codebase
@@ -766,14 +766,14 @@ Provide your analysis in this JSON format:
 	}, nil
 }
 
-func (s *Server) handleAgenticQuality(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleAgenticQuality(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if s.llm == nil {
 		return errorResult("LLM provider not configured. Set CODELOOM_LLM_PROVIDER and required API keys.")
 	}
 
 	req := parseAgenticRequest(request.Params.Arguments)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
 	// Get code context with focus on potential quality issues
@@ -1064,8 +1064,8 @@ func (s *Server) handleWatch(ctx context.Context, request mcp.CallToolRequest) (
 			return errorResult(fmt.Sprintf("failed to create watcher: %v", err))
 		}
 
-		// Create context for watcher
-		watchCtx, watchStop := context.WithCancel(context.Background())
+		// Create context for watcher, derived from parent context
+		watchCtx, watchStop := context.WithCancel(ctx)
 
 		s.mu.Lock()
 		s.watcher = watcher

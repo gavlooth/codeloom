@@ -278,6 +278,7 @@ func (p *OllamaProvider) Stream(ctx context.Context, messages []Message, opts ..
 		return nil, fmt.Errorf("ollama error: %s - %s", resp.Status, string(body))
 	}
 
+	// Create channel after all error checks to avoid leak on error paths
 	ch := make(chan string, 100)
 	go func() {
 		defer close(ch)
