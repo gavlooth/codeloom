@@ -102,6 +102,50 @@ func (idx *Indexer) GetStatus() Status {
 	return idx.status
 }
 
+// retryEmbedding attempts to generate an embedding with exponential backoff retry
+// It makes up to maxRetries attempts before giving up
+func retryEmbedding(ctx context.Context, embProvider embedding.Provider, nodeID, content string) ([]float32, error) {
+	const maxRetries = 3
+	const initialBackoff = 500 * time.Millisecond // 500ms
+
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Check context cancellation before each attempt
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		// Try to generate embedding
+		emb, err := embProvider.EmbedSingle(ctx, content)
+		if err == nil {
+			return emb, nil
+		}
+		lastErr = err
+
+		// If this was the last attempt, don't wait
+		if attempt == maxRetries-1 {
+			break
+		}
+
+		// Calculate backoff with exponential growth
+		backoff := time.Duration(1<<uint(attempt)) * initialBackoff
+		log.Printf("Retrying embedding for %s (attempt %d/%d, backoff %v): %v", nodeID, attempt+1, maxRetries, backoff, err)
+
+		// Wait for backoff duration or context cancellation
+		select {
+		case <-time.After(backoff):
+			// Continue to next attempt
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	return nil, fmt.Errorf("embedding failed after %d attempts: %w", maxRetries, lastErr)
+}
+
 // fileInfo holds information about a file for change detection
 type fileInfo struct {
 	Path    string
@@ -353,9 +397,9 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 			var emb []float32
 			if idx.embedding != nil && node.Content != "" {
 				var embErr error
-				emb, embErr = idx.embedding.EmbedSingle(ctx, node.Content)
+				emb, embErr = retryEmbedding(ctx, idx.embedding, node.ID, node.Content)
 				if embErr != nil {
-					log.Printf("Warning: embedding failed for %s: %v", node.ID, embErr)
+					log.Printf("Warning: embedding failed for %s after all retries: %v", node.ID, embErr)
 					// Continue without embedding rather than failing entirely
 				}
 			}
@@ -485,9 +529,9 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 		var emb []float32
 		if idx.embedding != nil && node.Content != "" {
 			var embErr error
-			emb, embErr = idx.embedding.EmbedSingle(ctx, node.Content)
+			emb, embErr = retryEmbedding(ctx, idx.embedding, node.ID, node.Content)
 			if embErr != nil {
-				log.Printf("Warning: embedding failed for %s: %v", node.ID, embErr)
+				log.Printf("Warning: embedding failed for %s after all retries: %v", node.ID, embErr)
 				// Continue without embedding rather than failing entirely
 			}
 		}
