@@ -13,11 +13,11 @@ import (
 )
 
 type GraphTools struct {
-	storage   *graph.Storage
+	storage   graph.StorageInterface
 	embedding embedding.Provider
 }
 
-func NewGraphTools(storage *graph.Storage, embeddingProvider embedding.Provider) *GraphTools {
+func NewGraphTools(storage graph.StorageInterface, embeddingProvider embedding.Provider) *GraphTools {
 	return &GraphTools{
 		storage:   storage,
 		embedding: embeddingProvider,

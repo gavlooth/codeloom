@@ -13,6 +13,16 @@ import (
 	"github.com/surrealdb/surrealdb.go"
 )
 
+// StorageInterface defines the interface for code graph storage operations
+// This interface allows for mocking in tests and flexibility in implementation
+type StorageInterface interface {
+	SemanticSearch(ctx context.Context, queryEmbedding []float32, limit int) ([]CodeNode, error)
+	GetTransitiveDependencies(ctx context.Context, nodeID string, depth int) ([]CodeNode, error)
+	TraceCallChain(ctx context.Context, from, to string) ([]CodeEdge, error)
+	FindByName(ctx context.Context, name string) ([]CodeNode, error)
+	GetNodesByFile(ctx context.Context, filePath string) ([]CodeNode, error)
+}
+
 type Storage struct {
 	db        *surrealdb.DB
 	namespace string
