@@ -380,6 +380,13 @@ func (s *Storage) GetTransitiveDependencies(ctx context.Context, nodeID string, 
 	visited[nodeID] = true
 
 	for level := 0; level < depth && len(currentLevel) > 0; level++ {
+		// Check for context cancellation at the start of each level
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
 		// Get all edges from current level nodes
 		var nextLevel []string
 
@@ -460,6 +467,13 @@ func (s *Storage) TraceCallChain(ctx context.Context, from, to string) ([]CodeEd
 	maxDepth := 15 // Prevent infinite loops
 
 	for len(queue) > 0 && len(queue[0].path) < maxDepth {
+		// Check for context cancellation at each BFS iteration
+		select {
+		case <-ctx.Done():
+			return []CodeEdge{}, ctx.Err()
+		default:
+		}
+
 		current := queue[0]
 		queue = queue[1:]
 
@@ -534,6 +548,13 @@ func (s *Storage) SemanticSearch(ctx context.Context, queryEmbedding []float32, 
 	// Calculate cosine similarity for each node
 	var scored []ScoredNode
 	for _, node := range nodes {
+		// Check for context cancellation during iteration
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
 		if len(node.Embedding) == 0 {
 			continue
 		}

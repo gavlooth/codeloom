@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -222,4 +223,260 @@ func TestFileLockingRaceCondition(t *testing.T) {
 	}
 
 	t.Log("Race condition test passed: no orphaned locks detected")
+}
+
+// TestSemanticSearchContextCancellation verifies that SemanticSearch respects context cancellation
+// This test verifies fix for CPU-intensive operations that should be cancellable
+func TestSemanticSearchContextCancellation(t *testing.T) {
+	// This test requires a running SurrealDB instance
+	// Skip in CI environments without database
+	t.Skip("requires SurrealDB instance")
+
+	ctx := context.Background()
+
+	// Create a test storage instance
+	storage, err := NewStorage(StorageConfig{
+		URL:       "ws://localhost:8000/rpc",
+		Namespace: "test",
+		Database:  "test",
+	})
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer storage.Close()
+
+	// Run migrations
+	if err := storage.RunMigrations(ctx); err != nil {
+		t.Fatalf("failed to run migrations: %v", err)
+	}
+
+	// Create many nodes with embeddings to test CPU-intensive loop
+	numNodes := 100
+	embedding := make([]float32, 128)
+	for i := range embedding {
+		embedding[i] = float32(i)
+	}
+
+	for i := 0; i < numNodes; i++ {
+		node := &CodeNode{
+			ID:       fmt.Sprintf("test_node_%d", i),
+			Name:     fmt.Sprintf("TestNode%d", i),
+			NodeType: NodeTypeFunction,
+			Language: "go",
+			FilePath: fmt.Sprintf("/test/file%d.go", i%10),
+			Content:  "func test() {}",
+			Embedding: embedding,
+		}
+		if err := storage.UpsertNode(ctx, node); err != nil {
+			t.Fatalf("failed to create test node %d: %v", i, err)
+		}
+	}
+
+	// Create a context that's already cancelled
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	// Measure time taken - should return quickly with cancellation error
+	start := time.Now()
+	nodes, err := storage.SemanticSearch(cancelledCtx, embedding, 10)
+	duration := time.Since(start)
+
+	// Verify cancellation error
+	if err == nil {
+		t.Error("expected context cancellation error, got nil")
+	} else if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+
+	// Verify fast return (should not process all 100 nodes)
+	if duration > 500*time.Millisecond {
+		t.Errorf("expected quick cancellation (< 500ms), took %v", duration)
+	}
+
+	// Verify no results returned
+	if len(nodes) != 0 {
+		t.Errorf("expected no results from cancelled context, got %d", len(nodes))
+	}
+
+	t.Logf("Context cancellation test passed: SemanticSearch cancelled in %v", duration)
+}
+
+// TestGetTransitiveDependenciesContextCancellation verifies that GetTransitiveDependencies respects context cancellation
+// This test verifies fix for graph traversal operations that should be cancellable
+func TestGetTransitiveDependenciesContextCancellation(t *testing.T) {
+	// This test requires a running SurrealDB instance
+	// Skip in CI environments without database
+	t.Skip("requires SurrealDB instance")
+
+	ctx := context.Background()
+
+	// Create a test storage instance
+	storage, err := NewStorage(StorageConfig{
+		URL:       "ws://localhost:8000/rpc",
+		Namespace: "test",
+		Database:  "test",
+	})
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer storage.Close()
+
+	// Run migrations
+	if err := storage.RunMigrations(ctx); err != nil {
+		t.Fatalf("failed to run migrations: %v", err)
+	}
+
+	// Create a deep dependency graph (depth 5) to test BFS traversal
+	baseNode := &CodeNode{
+		ID:       "base_node",
+		Name:     "BaseNode",
+		NodeType: NodeTypeFunction,
+		Language: "go",
+		FilePath: "/test/base.go",
+		Content:  "func base() {}",
+	}
+	if err := storage.UpsertNode(ctx, baseNode); err != nil {
+		t.Fatalf("failed to create base node: %v", err)
+	}
+
+	// Create 5 levels of dependencies
+	prevNodeID := "base_node"
+	for level := 1; level <= 5; level++ {
+		node := &CodeNode{
+			ID:       fmt.Sprintf("dep_node_level_%d", level),
+			Name:     fmt.Sprintf("DepNodeLevel%d", level),
+			NodeType: NodeTypeFunction,
+			Language: "go",
+			FilePath: "/test/dep.go",
+			Content:  "func dep() {}",
+		}
+		if err := storage.UpsertNode(ctx, node); err != nil {
+			t.Fatalf("failed to create dep node level %d: %v", level, err)
+		}
+
+		edge := &CodeEdge{
+			ID:       FormatEdgeID(prevNodeID, node.ID, EdgeTypeImports),
+			FromID:   prevNodeID,
+			ToID:     node.ID,
+			EdgeType: EdgeTypeImports,
+			Weight:   1.0,
+		}
+		if err := storage.UpsertEdge(ctx, edge); err != nil {
+			t.Fatalf("failed to create edge level %d: %v", level, err)
+		}
+
+		prevNodeID = node.ID
+	}
+
+	// Create a context that's already cancelled
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	// Measure time taken - should return quickly with cancellation error
+	start := time.Now()
+	nodes, err := storage.GetTransitiveDependencies(cancelledCtx, "base_node", 10)
+	duration := time.Since(start)
+
+	// Verify cancellation error
+	if err == nil {
+		t.Error("expected context cancellation error, got nil")
+	} else if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+
+	// Verify fast return (should not traverse full graph)
+	if duration > 500*time.Millisecond {
+		t.Errorf("expected quick cancellation (< 500ms), took %v", duration)
+	}
+
+	// Verify no results returned
+	if len(nodes) != 0 {
+		t.Errorf("expected no results from cancelled context, got %d", len(nodes))
+	}
+
+	t.Logf("Context cancellation test passed: GetTransitiveDependencies cancelled in %v", duration)
+}
+
+// TestTraceCallChainContextCancellation verifies that TraceCallChain respects context cancellation
+// This test verifies fix for graph traversal operations that should be cancellable
+func TestTraceCallChainContextCancellation(t *testing.T) {
+	// This test requires a running SurrealDB instance
+	// Skip in CI environments without database
+	t.Skip("requires SurrealDB instance")
+
+	ctx := context.Background()
+
+	// Create a test storage instance
+	storage, err := NewStorage(StorageConfig{
+		URL:       "ws://localhost:8000/rpc",
+		Namespace: "test",
+		Database:  "test",
+	})
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer storage.Close()
+
+	// Run migrations
+	if err := storage.RunMigrations(ctx); err != nil {
+		t.Fatalf("failed to run migrations: %v", err)
+	}
+
+	// Create a call chain (A -> B -> C -> D -> E -> F)
+	callNodes := []string{"func_a", "func_b", "func_c", "func_d", "func_e", "func_f"}
+	for _, name := range callNodes {
+		node := &CodeNode{
+			ID:       name,
+			Name:     name,
+			NodeType: NodeTypeFunction,
+			Language: "go",
+			FilePath: "/test/calls.go",
+			Content:  fmt.Sprintf("func %s() {}", name),
+		}
+		if err := storage.UpsertNode(ctx, node); err != nil {
+			t.Fatalf("failed to create node %s: %v", name, err)
+		}
+	}
+
+	// Create call edges
+	for i := 0; i < len(callNodes)-1; i++ {
+		edge := &CodeEdge{
+			ID:       FormatEdgeID(callNodes[i], callNodes[i+1], EdgeTypeCalls),
+			FromID:   callNodes[i],
+			ToID:     callNodes[i+1],
+			EdgeType: EdgeTypeCalls,
+			Weight:   1.0,
+		}
+		if err := storage.UpsertEdge(ctx, edge); err != nil {
+			t.Fatalf("failed to create call edge %s->%s: %v", callNodes[i], callNodes[i+1], err)
+		}
+	}
+
+	// Create a context that's already cancelled
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	// Measure time taken - should return quickly with cancellation error
+	start := time.Now()
+	edges, err := storage.TraceCallChain(cancelledCtx, "func_a", "func_f")
+	duration := time.Since(start)
+
+	// Verify cancellation error
+	if err == nil {
+		t.Error("expected context cancellation error, got nil")
+	} else if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+
+	// Verify fast return (should not traverse full chain)
+	if duration > 500*time.Millisecond {
+		t.Errorf("expected quick cancellation (< 500ms), took %v", duration)
+	}
+
+	// Verify no results returned
+	if len(edges) != 0 {
+		t.Errorf("expected no results from cancelled context, got %d", len(edges))
+	}
+
+	t.Logf("Context cancellation test passed: TraceCallChain cancelled in %v", duration)
 }
