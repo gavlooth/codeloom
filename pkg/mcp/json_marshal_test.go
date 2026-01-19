@@ -47,7 +47,7 @@ func TestErrorResult(t *testing.T) {
 		t.Errorf("Result text should be valid JSON, got error: %v", err)
 	}
 
-	if !parsed["error"].(bool) {
+	if isError, ok := parsed["error"].(bool); !ok || !isError {
 		t.Error("Parsed JSON should have error=true")
 	}
 
@@ -149,8 +149,11 @@ func TestErrorResultEdgeCases(t *testing.T) {
 					var parsed map[string]interface{}
 					if err := json.Unmarshal([]byte(textContent.Text), &parsed); err == nil {
 						// Successfully parsed as JSON
-						if tc.message == "" && parsed["message"].(string) != "" {
+						if tc.message == "" {
 							// Empty message should still produce valid JSON
+							if message, ok := parsed["message"].(string); ok && message != "" {
+								// Message field exists and is non-empty, which is expected
+							}
 						}
 					}
 				}
