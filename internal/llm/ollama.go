@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/heefoo/codeloom/internal/config"
+	"github.com/heefoo/codeloom/internal/httpclient"
 )
 
 type OllamaProvider struct {
@@ -74,14 +75,17 @@ func NewOllamaProvider(cfg config.LLMConfig) (*OllamaProvider, error) {
 		baseURL = "http://localhost:11434"
 	}
 
+	timeout := time.Duration(cfg.TimeoutSecs) * time.Second
+	if timeout == 0 {
+		timeout = 120 * time.Second // Default 2 minute timeout
+	}
+
 	return &OllamaProvider{
 		baseURL:     baseURL,
 		model:       cfg.Model,
 		temperature: cfg.Temperature,
 		maxTokens:   cfg.MaxTokens,
-		client: &http.Client{
-			Timeout: time.Duration(cfg.TimeoutSecs) * time.Second,
-		},
+		client:      httpclient.GetSharedClient(timeout),
 	}, nil
 }
 
