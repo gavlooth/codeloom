@@ -183,6 +183,11 @@ func StoreNodesBatch(
 
 	// Gather all embedding results
 	for result := range resultCh {
+		// Check for embedding errors - skip batches that failed
+		if result.err != nil {
+			log.Printf("Warning: skipping batch %d due to embedding error: %v", result.batchIndex, result.err)
+			continue
+		}
 		embeddingResults[result.batchIndex] = result.embeddings
 		textIndicesResults[result.batchIndex] = batches[result.batchIndex].textIndices
 	}
