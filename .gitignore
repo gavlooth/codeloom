@@ -3,9 +3,15 @@ codegraph
 codegraph-go
 codeloom
 debug_parse
+debug_radix
+main
 test_annotations
 test_grammars
+test_octal_char
+test_radix
 test_ratios
+test_simple_radix
+test_tree
 verify_migration_logging
 *.exe
 *.test
