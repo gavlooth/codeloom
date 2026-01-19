@@ -490,14 +490,24 @@ func (s *Server) handleIndex(ctx context.Context, request mcp.CallToolRequest) (
 		}
 	}
 
-	// Update indexer exclude patterns if provided
-	if len(excludePatterns) > 0 {
+	// Parse skip_embeddings parameter
+	skipEmbeddings := false
+	if se, ok := request.Params.Arguments["skip_embeddings"].(bool); ok {
+		skipEmbeddings = se
+	}
+
+	// Update indexer if exclude patterns or skip_embeddings provided
+	if len(excludePatterns) > 0 || skipEmbeddings {
 		allPatterns := append(indexer.DefaultExcludePatterns(), excludePatterns...)
+		embProvider := s.embedding
+		if skipEmbeddings {
+			embProvider = nil
+		}
 		s.mu.Lock()
 		s.indexer = indexer.New(indexer.Config{
 			Parser:          parser.NewParser(),
 			Storage:         s.storage,
-			Embedding:       s.embedding,
+			Embedding:       embProvider,
 			ExcludePatterns: allPatterns,
 		})
 		s.mu.Unlock()

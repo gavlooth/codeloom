@@ -317,3 +317,74 @@ func TestWatcherStopWaitsForGoroutine(t *testing.T) {
 		t.Log("Could not verify mutex unlock/wait order (may need manual verification)")
 	}
 }
+
+// TestSkipEmbeddingsParameter verifies that the skip_embeddings parameter
+// is properly parsed and used in handleIndex function
+func TestSkipEmbeddingsParameter(t *testing.T) {
+	// Read source code to verify parameter handling
+	sourceBytes, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatalf("Failed to read server.go: %v", err)
+	}
+
+	sourceCode := string(sourceBytes)
+
+	// Find handleIndex function
+	handleIndexStart := strings.Index(sourceCode, "func (s *Server) handleIndex")
+	if handleIndexStart == -1 {
+		t.Fatal("Could not find handleIndex function")
+	}
+
+	// Extract a reasonable portion of handleIndex (next 1500 chars)
+	handleIndexEnd := handleIndexStart + 1500
+	if handleIndexEnd > len(sourceCode) {
+		handleIndexEnd = len(sourceCode)
+	}
+	handleIndexCode := sourceCode[handleIndexStart:handleIndexEnd]
+
+	// Verify that skip_embeddings parameter is parsed
+	skipEmbedParsePattern := `skipEmbeddings := false`
+	if !strings.Contains(handleIndexCode, skipEmbedParsePattern) {
+		t.Error("Expected to find skip_embeddings parameter parsing in handleIndex")
+	} else {
+		t.Log("✓ skip_embeddings parameter is parsed")
+	}
+
+	// Verify that skip_embeddings value is read from request
+	skipEmbedReadPattern := `request.Params.Arguments["skip_embeddings"]`
+	if !strings.Contains(handleIndexCode, skipEmbedReadPattern) {
+		t.Error("Expected to find skip_embeddings parameter read from request")
+	} else {
+		t.Log("✓ skip_embeddings parameter is read from request arguments")
+	}
+
+	// Verify that embedProvider is conditionally set to nil
+	embProviderPattern := `embProvider := s.embedding`
+	if !strings.Contains(handleIndexCode, embProviderPattern) {
+		t.Error("Expected to find conditional embedding provider assignment")
+	} else {
+		t.Log("✓ Conditional embedding provider assignment is present")
+	}
+
+	// Verify that embedProvider is set to nil when skipEmbeddings is true
+	nilEmbedPattern := `embProvider = nil`
+	if !strings.Contains(handleIndexCode, nilEmbedPattern) {
+		t.Error("Expected to find nil assignment for embedding provider when skip_embeddings is true")
+	} else {
+		t.Log("✓ nil assignment for embedding provider is present")
+	}
+
+	// Verify that embProvider is used in indexer.New
+	indexerNewPattern := `Embedding:       embProvider`
+	if !strings.Contains(handleIndexCode, indexerNewPattern) {
+		// Try alternate spacing pattern
+		altPattern := `Embedding: embProvider`
+		if !strings.Contains(handleIndexCode, altPattern) {
+			t.Error("Expected to find embProvider used in indexer.New")
+		} else {
+			t.Log("✓ embProvider is used in indexer.New configuration")
+		}
+	} else {
+		t.Log("✓ embProvider is used in indexer.New configuration")
+	}
+}
