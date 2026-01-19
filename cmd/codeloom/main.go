@@ -192,12 +192,10 @@ func indexCmd(args []string) {
 		cancel()
 	}()
 
-	// Progress callback
+	// Progress callback - always show basic progress
 	progressCb := func(status indexer.Status) {
-		if *verbose {
-			fmt.Printf("\rProgress: %d files, %d/%d nodes stored, %d edges",
-				status.FilesIndexed, status.NodesCreated, status.NodesTotal, status.EdgesCreated)
-		}
+		fmt.Printf("\rProgress: %d files, %d/%d nodes stored, %d edges",
+			status.FilesIndexed, status.NodesCreated, status.NodesTotal, status.EdgesCreated)
 	}
 
 	// Run indexing
@@ -254,7 +252,7 @@ Index Options:
   --config         Path to config file
   --exclude        Comma-separated patterns to exclude (e.g., "test,mock")
   --no-embeddings  Skip embedding generation (faster, but no semantic search)
-  --verbose        Show detailed progress
+  --verbose        Show detailed errors and warnings
 
 Server Options:
   --config       Path to config file
@@ -262,8 +260,8 @@ Server Options:
   --watch        Watch for file changes
 
 Examples:
-  codeloom index ./src                     Index the src directory
-  codeloom index --verbose ./              Index current directory with progress
+  codeloom index ./src                     Index src directory
+  codeloom index --verbose ./              Index current directory with detailed errors
   codeloom index --no-embeddings ./pkg     Index without embeddings (faster)
   codeloom start stdio                     Start MCP server on stdin/stdout
   codeloom start http --port 3003          Start MCP server on HTTP

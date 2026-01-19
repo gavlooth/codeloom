@@ -64,7 +64,7 @@ Improvements would require:
 - [ ] Consider adaptive batch sizing based on embedding service response times
 
 ### Reliability
-- [ ] Add metrics/tracking for embedding retry failures to identify systemic issues
+- [x] Add metrics/tracking for embedding retry failures to identify systemic issues
 - [ ] Consider circuit breaker pattern for embedding service outages
 - [ ] Add health checks for external dependencies (Ollama, OpenAI, Anthropic, etc.)
 
@@ -83,6 +83,7 @@ Improvements would require:
 
 This section tracks items that have been addressed:
 
+- [x] **Embedding retry metrics** - Added metrics tracking for embedding retry failures to identify systemic issues
 - [x] **Common Lisp decimal number support** - Added support for numbers with leading decimal point (`.9`, `.123`)
 - [x] **Common Lisp ratio number support** - Added parsing for ratio literals like `3/4`
 - [x] **Common Lisp radix number support** - Added validation for radix literals (`2r101`, `16xFF`)
