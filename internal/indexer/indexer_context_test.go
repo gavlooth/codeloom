@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -183,7 +184,8 @@ func TestRetryEmbeddingSuccessOnFirstTry(t *testing.T) {
 	ctx := context.Background()
 	provider := &mockEmbeddingProviderWithRetry{embDimension: 128}
 
-	emb, err := retryEmbedding(ctx, provider, "test-node", "test content")
+	var retryCount, successCount, failureCount atomic.Int64
+	emb, err := retryEmbedding(ctx, provider, "test-node", "test content", &retryCount, &successCount, &failureCount)
 
 	if err != nil {
 		t.Errorf("Expected success on first attempt, got error: %v", err)
@@ -200,6 +202,18 @@ func TestRetryEmbeddingSuccessOnFirstTry(t *testing.T) {
 	if provider.callCount != 1 {
 		t.Errorf("Expected 1 call to provider, got %d", provider.callCount)
 	}
+
+	if successCount.Load() != 1 {
+		t.Errorf("Expected success count of 1, got %d", successCount.Load())
+	}
+
+	if retryCount.Load() != 0 {
+		t.Errorf("Expected retry count of 0, got %d", retryCount.Load())
+	}
+
+	if failureCount.Load() != 0 {
+		t.Errorf("Expected failure count of 0, got %d", failureCount.Load())
+	}
 }
 
 // TestRetryEmbeddingSuccessAfterRetries tests that embedding succeeds after retries
@@ -208,8 +222,9 @@ func TestRetryEmbeddingSuccessAfterRetries(t *testing.T) {
 	// Fail first 2 calls, succeed on 3rd
 	provider := &mockEmbeddingProviderWithRetry{failUntil: 2, embDimension: 128}
 
+	var retryCount, successCount, failureCount atomic.Int64
 	startTime := time.Now()
-	emb, err := retryEmbedding(ctx, provider, "test-node", "test content")
+	emb, err := retryEmbedding(ctx, provider, "test-node", "test content", &retryCount, &successCount, &failureCount)
 	elapsed := time.Since(startTime)
 
 	if err != nil {
@@ -228,6 +243,18 @@ func TestRetryEmbeddingSuccessAfterRetries(t *testing.T) {
 	if elapsed < 1400*time.Millisecond {
 		t.Errorf("Expected at least 1.4s of backoff time, got %v", elapsed)
 	}
+
+	if successCount.Load() != 1 {
+		t.Errorf("Expected success count of 1, got %d", successCount.Load())
+	}
+
+	if retryCount.Load() != 2 {
+		t.Errorf("Expected retry count of 2, got %d", retryCount.Load())
+	}
+
+	if failureCount.Load() != 0 {
+		t.Errorf("Expected failure count of 0, got %d", failureCount.Load())
+	}
 }
 
 // TestRetryEmbeddingFailureAfterMaxRetries tests that embedding fails after max retries
@@ -236,7 +263,8 @@ func TestRetryEmbeddingFailureAfterMaxRetries(t *testing.T) {
 	// Always fail
 	provider := &mockEmbeddingProviderWithRetry{shouldFail: true, embDimension: 128}
 
-	emb, err := retryEmbedding(ctx, provider, "test-node", "test content")
+	var retryCount, successCount, failureCount atomic.Int64
+	emb, err := retryEmbedding(ctx, provider, "test-node", "test content", &retryCount, &successCount, &failureCount)
 
 	if err == nil {
 		t.Error("Expected error after max retries, got nil")
@@ -254,6 +282,18 @@ func TestRetryEmbeddingFailureAfterMaxRetries(t *testing.T) {
 	if !containsString(err.Error(), "after 3 attempts") {
 		t.Errorf("Expected error message to contain 'after 3 attempts', got: %s", err.Error())
 	}
+
+	if successCount.Load() != 0 {
+		t.Errorf("Expected success count of 0, got %d", successCount.Load())
+	}
+
+	if retryCount.Load() != 2 {
+		t.Errorf("Expected retry count of 2, got %d", retryCount.Load())
+	}
+
+	if failureCount.Load() != 1 {
+		t.Errorf("Expected failure count of 1, got %d", failureCount.Load())
+	}
 }
 
 // TestRetryEmbeddingContextCancellation tests that retry respects context cancellation
@@ -264,7 +304,8 @@ func TestRetryEmbeddingContextCancellation(t *testing.T) {
 
 	provider := &mockEmbeddingProviderWithRetry{embDimension: 128}
 
-	emb, err := retryEmbedding(ctx, provider, "test-node", "test content")
+	var retryCount, successCount, failureCount atomic.Int64
+	emb, err := retryEmbedding(ctx, provider, "test-node", "test content", &retryCount, &successCount, &failureCount)
 
 	if err != context.Canceled {
 		t.Errorf("Expected context.Canceled error, got %v", err)
@@ -276,6 +317,18 @@ func TestRetryEmbeddingContextCancellation(t *testing.T) {
 
 	if provider.callCount > 1 {
 		t.Errorf("Expected at most 1 call due to cancellation, got %d", provider.callCount)
+	}
+
+	if successCount.Load() != 0 {
+		t.Errorf("Expected success count of 0, got %d", successCount.Load())
+	}
+
+	if retryCount.Load() != 0 {
+		t.Errorf("Expected retry count of 0, got %d", retryCount.Load())
+	}
+
+	if failureCount.Load() != 0 {
+		t.Errorf("Expected failure count of 0 (cancellation is not a retry failure), got %d", failureCount.Load())
 	}
 }
 
@@ -293,7 +346,8 @@ func TestRetryEmbeddingMidRetryCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	emb, err := retryEmbedding(ctx, provider, "test-node", "test content")
+	var retryCount, successCount, failureCount atomic.Int64
+	emb, err := retryEmbedding(ctx, provider, "test-node", "test content", &retryCount, &successCount, &failureCount)
 
 	if err != context.Canceled {
 		t.Errorf("Expected context.Canceled error, got %v", err)
@@ -306,6 +360,18 @@ func TestRetryEmbeddingMidRetryCancellation(t *testing.T) {
 	// Should have made 1 call (failure) before noticing cancellation
 	if provider.callCount != 1 {
 		t.Errorf("Expected 1 call before cancellation, got %d", provider.callCount)
+	}
+
+	if successCount.Load() != 0 {
+		t.Errorf("Expected success count of 0, got %d", successCount.Load())
+	}
+
+	if retryCount.Load() != 1 {
+		t.Errorf("Expected retry count of 1 (first retry was initiated), got %d", retryCount.Load())
+	}
+
+	if failureCount.Load() != 0 {
+		t.Errorf("Expected failure count of 0 (cancellation is not a retry failure), got %d", failureCount.Load())
 	}
 }
 

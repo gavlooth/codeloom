@@ -35,6 +35,11 @@ type Status struct {
 	StartedAt    time.Time `json:"started_at,omitempty"`
 	CompletedAt  time.Time `json:"completed_at,omitempty"`
 	LastError    string    `json:"last_error,omitempty"`
+
+	// Embedding metrics to identify systemic issues
+	EmbeddingSuccessCount int64 `json:"embedding_success_count"` // Total successful embeddings
+	EmbeddingRetryCount   int64 `json:"embedding_retry_count"`   // Total retry attempts
+	EmbeddingFailureCount int64 `json:"embedding_failure_count"` // Total nodes that failed after all retries
 }
 
 // Indexer handles codebase indexing operations
@@ -104,7 +109,7 @@ func (idx *Indexer) GetStatus() Status {
 
 // retryEmbedding attempts to generate an embedding with exponential backoff retry
 // It makes up to maxRetries attempts before giving up
-func retryEmbedding(ctx context.Context, embProvider embedding.Provider, nodeID, content string) ([]float32, error) {
+func retryEmbedding(ctx context.Context, embProvider embedding.Provider, nodeID, content string, retryCount, successCount, failureCount *atomic.Int64) ([]float32, error) {
 	const maxRetries = 3
 	const initialBackoff = 500 * time.Millisecond // 500ms
 
@@ -121,6 +126,7 @@ func retryEmbedding(ctx context.Context, embProvider embedding.Provider, nodeID,
 		// Try to generate embedding
 		emb, err := embProvider.EmbedSingle(ctx, content)
 		if err == nil {
+			successCount.Add(1)
 			return emb, nil
 		}
 		lastErr = err
@@ -129,6 +135,9 @@ func retryEmbedding(ctx context.Context, embProvider embedding.Provider, nodeID,
 		if attempt == maxRetries-1 {
 			break
 		}
+
+		// Increment retry counter
+		retryCount.Add(1)
 
 		// Calculate backoff with exponential growth
 		backoff := time.Duration(1<<uint(attempt)) * initialBackoff
@@ -143,6 +152,8 @@ func retryEmbedding(ctx context.Context, embProvider embedding.Provider, nodeID,
 		}
 	}
 
+	// All retries failed
+	failureCount.Add(1)
 	return nil, fmt.Errorf("embedding failed after %d attempts: %w", maxRetries, lastErr)
 }
 
@@ -382,6 +393,10 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 
 	// Process each file atomically: generate embeddings, store, and update metadata
 	var nodesProcessed int32
+
+	// Initialize embedding metrics counters
+	var retryCount, successCount, failureCount atomic.Int64
+
 	for _, filePath := range changedFiles {
 		result := fileResults[filePath]
 
@@ -397,7 +412,7 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 			var emb []float32
 			if idx.embedding != nil && node.Content != "" {
 				var embErr error
-				emb, embErr = retryEmbedding(ctx, idx.embedding, node.ID, node.Content)
+				emb, embErr = retryEmbedding(ctx, idx.embedding, node.ID, node.Content, &retryCount, &successCount, &failureCount)
 				if embErr != nil {
 					log.Printf("Warning: embedding failed for %s after all retries: %v", node.ID, embErr)
 					// Continue without embedding rather than failing entirely
@@ -499,6 +514,9 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 	idx.mu.Lock()
 	idx.status.State = "idle"
 	idx.status.EdgesCreated = int64(totalEdges)
+	idx.status.EmbeddingSuccessCount = successCount.Load()
+	idx.status.EmbeddingRetryCount = retryCount.Load()
+	idx.status.EmbeddingFailureCount = failureCount.Load()
 	idx.status.CompletedAt = time.Now()
 	idx.mu.Unlock()
 
@@ -522,6 +540,9 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 		return fmt.Errorf("failed to parse file: %w", err)
 	}
 
+	// Initialize embedding metrics counters
+	var retryCount, successCount, failureCount atomic.Int64
+
 	// Generate embeddings for all nodes before storing
 	nodesWithEmbeddings := make([]*graph.CodeNode, 0, len(result.Nodes))
 	for i := range result.Nodes {
@@ -529,7 +550,7 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 		var emb []float32
 		if idx.embedding != nil && node.Content != "" {
 			var embErr error
-			emb, embErr = retryEmbedding(ctx, idx.embedding, node.ID, node.Content)
+			emb, embErr = retryEmbedding(ctx, idx.embedding, node.ID, node.Content, &retryCount, &successCount, &failureCount)
 			if embErr != nil {
 				log.Printf("Warning: embedding failed for %s after all retries: %v", node.ID, embErr)
 				// Continue without embedding rather than failing entirely
@@ -568,6 +589,12 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 	// Atomically update the file: delete old nodes/edges and store new ones in a single transaction
 	if err := idx.storage.UpdateFileAtomic(ctx, absPath, nodesWithEmbeddings, graphEdges); err != nil {
 		return fmt.Errorf("atomic file update failed for %s: %w", filePath, err)
+	}
+
+	// Log embedding metrics
+	if idx.embedding != nil {
+		log.Printf("File indexing complete: %d successes, %d retries, %d failures",
+			successCount.Load(), retryCount.Load(), failureCount.Load())
 	}
 
 	return nil
