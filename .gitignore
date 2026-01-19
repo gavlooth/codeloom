@@ -5,6 +5,7 @@ codeloom
 debug_parse
 test_annotations
 test_grammars
+test_ratios
 verify_migration_logging
 *.exe
 *.test
