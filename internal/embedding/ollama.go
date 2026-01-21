@@ -20,6 +20,7 @@ type OllamaProvider struct {
 	model     string
 	dimension int
 	client    *http.Client
+	maxConcurrency int
 }
 
 type ollamaEmbedRequest struct {
@@ -42,11 +43,17 @@ func NewOllamaProvider(cfg config.EmbeddingConfig) (*OllamaProvider, error) {
 		dimension = 768 // Default for nomic-embed-text
 	}
 
+	maxConcurrency := cfg.MaxConcurrency
+	if maxConcurrency == 0 {
+		maxConcurrency = 10 // Default concurrency limit
+	}
+
 	return &OllamaProvider{
 		baseURL:   baseURL,
 		model:     cfg.Model,
 		dimension: dimension,
 		client:    httpclient.GetSharedClient(60 * time.Second),
+		maxConcurrency: maxConcurrency,
 	}, nil
 }
 
@@ -109,7 +116,11 @@ func (p *OllamaProvider) Embed(ctx context.Context, texts []string) ([][]float32
 
 	// Use concurrent requests for better performance
 	// Ollama doesn't have a native batch API, so we parallelize requests
-	const maxConcurrency = 10
+	const defaultMaxConcurrency = 10
+	maxConcurrency := p.maxConcurrency
+	if maxConcurrency < 1 {
+		maxConcurrency = defaultMaxConcurrency
+	}
 
 	embeddings := make([][]float32, len(texts))
 	errors := make([]error, len(texts))

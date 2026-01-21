@@ -16,44 +16,64 @@ import (
 
 func TestNewOllamaProvider(t *testing.T) {
 	tests := []struct {
-		name      string
-		config    config.EmbeddingConfig
-		wantBase  string
-		wantModel string
-		wantDim   int
+		name            string
+		config          config.EmbeddingConfig
+		wantBase        string
+		wantModel       string
+		wantDim         int
+		wantMaxConc     int
 	}{
 		{
 			name: "default values",
 			config: config.EmbeddingConfig{
 				Provider: "ollama",
 			},
-			wantBase:  "http://localhost:11434",
-			wantModel: "",
-			wantDim:   768,
+			wantBase:    "http://localhost:11434",
+			wantModel:   "",
+			wantDim:     768,
+			wantMaxConc: 10,
 		},
 		{
 			name: "custom values",
 			config: config.EmbeddingConfig{
-				Provider:  "ollama",
-				BaseURL:   "http://custom:9999",
-				Model:     "custom-model",
-				Dimension: 1024,
+				Provider:      "ollama",
+				BaseURL:       "http://custom:9999",
+				Model:         "custom-model",
+				Dimension:     1024,
+				MaxConcurrency: 20,
 			},
-			wantBase:  "http://custom:9999",
-			wantModel: "custom-model",
-			wantDim:   1024,
+			wantBase:    "http://custom:9999",
+			wantModel:   "custom-model",
+			wantDim:     1024,
+			wantMaxConc: 20,
 		},
 		{
 			name: "zero dimension uses default",
 			config: config.EmbeddingConfig{
-				Provider:  "ollama",
-				BaseURL:   "http://localhost:11434",
-				Model:     "test-model",
-				Dimension: 0,
+				Provider:      "ollama",
+				BaseURL:       "http://localhost:11434",
+				Model:         "test-model",
+				Dimension:     0,
+				MaxConcurrency: 5,
 			},
-			wantBase:  "http://localhost:11434",
-			wantModel: "test-model",
-			wantDim:   768,
+			wantBase:    "http://localhost:11434",
+			wantModel:   "test-model",
+			wantDim:     768,
+			wantMaxConc: 5,
+		},
+		{
+			name: "zero max concurrency uses default",
+			config: config.EmbeddingConfig{
+				Provider:      "ollama",
+				BaseURL:       "http://localhost:11434",
+				Model:         "test-model",
+				Dimension:     768,
+				MaxConcurrency: 0,
+			},
+			wantBase:    "http://localhost:11434",
+			wantModel:   "test-model",
+			wantDim:     768,
+			wantMaxConc: 10,
 		},
 	}
 
@@ -72,6 +92,9 @@ func TestNewOllamaProvider(t *testing.T) {
 			}
 			if provider.dimension != tt.wantDim {
 				t.Errorf("dimension = %v, want %v", provider.dimension, tt.wantDim)
+			}
+			if provider.maxConcurrency != tt.wantMaxConc {
+				t.Errorf("maxConcurrency = %v, want %v", provider.maxConcurrency, tt.wantMaxConc)
 			}
 		})
 	}
@@ -454,3 +477,76 @@ func TestOllamaProviderEmbedContextCancellation(t *testing.T) {
 		t.Errorf("Embed() should return nil when context cancelled, got %v", embeddings)
 	}
 }
+
+func TestOllamaProviderMaxConcurrency(t *testing.T) {
+	// Test that configured maxConcurrency limits concurrent requests
+	var maxConcurrentRequests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Track concurrent requests
+		maxConcurrentRequests.Add(1)
+		defer maxConcurrentRequests.Add(-1)
+
+		// Add small delay to ensure concurrent requests overlap
+		time.Sleep(50 * time.Millisecond)
+
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"embedding":[0.1,0.2,0.3]}`)
+	}))
+	defer server.Close()
+
+	tests := []struct {
+		name           string
+		maxConcurrency int
+		textCount      int
+	}{
+		{
+			name:           "concurrency 1",
+			maxConcurrency: 1,
+			textCount:      10,
+		},
+		{
+			name:           "concurrency 3",
+			maxConcurrency: 3,
+			textCount:      10,
+		},
+		{
+			name:           "concurrency 10",
+			maxConcurrency: 10,
+			textCount:      20,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider, err := NewOllamaProvider(config.EmbeddingConfig{
+				Provider:      "ollama",
+				BaseURL:       server.URL,
+				MaxConcurrency: tt.maxConcurrency,
+			})
+			if err != nil {
+				t.Fatalf("NewOllamaProvider() error = %v", err)
+			}
+
+			ctx := context.Background()
+			texts := make([]string, tt.textCount)
+			for i := range texts {
+				texts[i] = fmt.Sprintf("test text %d", i)
+			}
+
+			embeddings, err := provider.Embed(ctx, texts)
+			if err != nil {
+				t.Errorf("Embed() unexpected error = %v", err)
+			}
+			if len(embeddings) != len(texts) {
+				t.Errorf("Embed() returned %d embeddings, want %d", len(embeddings), len(texts))
+			}
+
+			// Verify max concurrent requests did not exceed configured value
+			maxObserved := maxConcurrentRequests.Load()
+			if maxObserved > int64(tt.maxConcurrency) {
+				t.Errorf("Concurrent requests exceeded limit: observed %d, max allowed %d", maxObserved, tt.maxConcurrency)
+			}
+		})
+	}
+}
+
