@@ -1,0 +1,12 @@
+#V2
+SELECT count() as cnt FROM nodes WHERE embedding IS NOT NONE GROUP ALL
+SELECT count() as cnt FROM nodes GROUP ALL
+INFO FOR DB
+INFO FOR NS
+SELECT count() as cnt FROM nodes GROUP ALL
+INFO FOR DB
+SELECT count() as cnt FROM nodes GROUP ALL; SELECT count() as cnt FROM nodes WHERE embedding IS NOT NONE GROUP ALL
+DELETE FROM nodes; DELETE FROM edges; DELETE FROM file_metadata;
+SELECT count() as cnt FROM file_metadata GROUP ALL
+DELETE FROM file_metadata; SELECT count() as cnt FROM file_metadata GROUP ALL;
+SELECT count() as cnt FROM nodes GROUP ALL; SELECT count() as cnt FROM nodes WHERE embedding IS NOT NONE GROUP ALL

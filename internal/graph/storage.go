@@ -533,7 +533,8 @@ func (s *Storage) SemanticSearch(ctx context.Context, queryEmbedding []float32, 
 
 	// Fetch all nodes that have embeddings
 	// Note: For large codebases, this should be paginated or use an external vector DB
-	query := `SELECT * FROM nodes WHERE embedding != NONE LIMIT 10000`
+	// Check both for NONE (null) and non-empty arrays
+	query := `SELECT * FROM nodes WHERE embedding != NONE AND array::len(embedding) > 0 LIMIT 10000`
 	results, err := surrealdb.Query[[]CodeNode](ctx, s.db, query, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch nodes: %w", err)
@@ -1222,7 +1223,7 @@ func (s *Storage) UpdateFileAtomic(ctx context.Context, filePath string, nodes [
 					embedding = $node.embedding,
 					complexity = $node.complexity
 				WHERE id = $node.id;
-			}`)
+			};`)
 	}
 
 	// Part 4: Store new edges
@@ -1247,7 +1248,7 @@ func (s *Storage) UpdateFileAtomic(ctx context.Context, filePath string, nodes [
 					edge_type = $edge.edge_type,
 					weight = $edge.weight
 				WHERE id = $edge.id;
-			}`)
+			};`)
 	}
 
 	// Combine into a single transaction

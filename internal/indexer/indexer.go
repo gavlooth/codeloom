@@ -513,6 +513,7 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dir string, progressCb f
 
 	idx.mu.Lock()
 	idx.status.State = "idle"
+	idx.status.NodesCreated = int64(atomic.LoadInt32(&nodesProcessed))
 	idx.status.EdgesCreated = int64(totalEdges)
 	idx.status.EmbeddingSuccessCount = successCount.Load()
 	idx.status.EmbeddingRetryCount = retryCount.Load()

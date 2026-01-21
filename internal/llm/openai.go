@@ -13,12 +13,17 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
+// Default max concurrent requests for rate limiting
+const defaultMaxConcurrentRequests = 2
+
 type OpenAIProvider struct {
 	client      *openai.Client
 	model       string
 	temperature float32
 	maxTokens   int
 	name        string
+	// Semaphore for rate limiting concurrent requests
+	semaphore chan struct{}
 }
 
 func NewOpenAIProvider(cfg config.LLMConfig) (*OpenAIProvider, error) {
@@ -49,6 +54,7 @@ func NewOpenAIProvider(cfg config.LLMConfig) (*OpenAIProvider, error) {
 		temperature: cfg.Temperature,
 		maxTokens:   cfg.MaxTokens,
 		name:        name,
+		semaphore:   make(chan struct{}, defaultMaxConcurrentRequests),
 	}, nil
 }
 
@@ -57,6 +63,14 @@ func (p *OpenAIProvider) Name() string {
 }
 
 func (p *OpenAIProvider) Generate(ctx context.Context, messages []Message, opts ...Option) (string, error) {
+	// Acquire semaphore to limit concurrent requests
+	select {
+	case p.semaphore <- struct{}{}:
+		defer func() { <-p.semaphore }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+
 	options := &GenerateOptions{
 		Temperature: p.temperature,
 		MaxTokens:   p.maxTokens,
@@ -97,6 +111,14 @@ func (p *OpenAIProvider) Generate(ctx context.Context, messages []Message, opts 
 }
 
 func (p *OpenAIProvider) GenerateWithTools(ctx context.Context, messages []Message, tools []Tool) (*ToolCallResponse, error) {
+	// Acquire semaphore to limit concurrent requests
+	select {
+	case p.semaphore <- struct{}{}:
+		defer func() { <-p.semaphore }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
 	openaiMessages := make([]openai.ChatCompletionMessage, len(messages))
 	for i, m := range messages {
 		openaiMessages[i] = openai.ChatCompletionMessage{
@@ -159,6 +181,15 @@ func (p *OpenAIProvider) GenerateWithTools(ctx context.Context, messages []Messa
 }
 
 func (p *OpenAIProvider) Stream(ctx context.Context, messages []Message, opts ...Option) (<-chan string, error) {
+	// Acquire semaphore to limit concurrent requests
+	// For streaming, we hold the semaphore for the entire stream duration
+	select {
+	case p.semaphore <- struct{}{}:
+		// Will release in goroutine when stream ends
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
 	options := &GenerateOptions{
 		Temperature: p.temperature,
 		MaxTokens:   p.maxTokens,
@@ -186,6 +217,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, messages []Message, opts ..
 
 	stream, err := p.client.CreateChatCompletionStream(ctx, req)
 	if err != nil {
+		<-p.semaphore // Release semaphore on error
 		return nil, fmt.Errorf("openai stream error: %w", err)
 	}
 
@@ -193,6 +225,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, messages []Message, opts ..
 	go func() {
 		defer close(ch)
 		defer stream.Close()
+		defer func() { <-p.semaphore }() // Release semaphore when stream ends
 
 		for {
 			select {
