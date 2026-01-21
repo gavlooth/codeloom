@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -28,12 +29,13 @@ type LLMConfig struct {
 }
 
 type EmbeddingConfig struct {
-	Provider  string `toml:"provider"`
-	Model     string `toml:"model"`
-	Dimension int    `toml:"dimension"`
-	BaseURL   string `toml:"base_url"`
-	APIKey    string `toml:"api_key"`
-	BatchSize int    `toml:"batch_size"`
+	Provider      string `toml:"provider"`
+	Model         string `toml:"model"`
+	Dimension     int    `toml:"dimension"`
+	BaseURL       string `toml:"base_url"`
+	APIKey        string `toml:"api_key"`
+	BatchSize     int    `toml:"batch_size"`
+	MaxConcurrency int    `toml:"max_concurrency"`
 }
 
 type DatabaseConfig struct {
@@ -51,7 +53,9 @@ type SurrealDBConfig struct {
 
 type ServerConfig struct {
 	Mode              string `toml:"mode"`
+	Transport         string `toml:"transport"`
 	Port              int    `toml:"port"`
+	HTTPPath          string `toml:"http_path"`
 	WatcherDebounceMs int    `toml:"watcher_debounce_ms"`
 	IndexTimeoutMs    int    `toml:"index_timeout_ms"`
 }
@@ -98,11 +102,12 @@ func DefaultConfig() *Config {
 			TimeoutSecs:   120,
 		},
 		Embedding: EmbeddingConfig{
-			Provider:  "ollama",
-			Model:     "nomic-embed-text",
-			Dimension: 768,
-			BaseURL:   "http://localhost:11434",
-			BatchSize: 64,
+			Provider:      "ollama",
+			Model:         "nomic-embed-text",
+			Dimension:     768,
+			BaseURL:       "http://localhost:11434",
+			BatchSize:     64,
+			MaxConcurrency: 10,
 		},
 		Database: DatabaseConfig{
 			Backend: "surrealdb",
@@ -115,8 +120,10 @@ func DefaultConfig() *Config {
 			},
 		},
 		Server: ServerConfig{
-			Mode:              "stdio",
+			Mode:              "",
+			Transport:         "sse",
 			Port:              3003,
+			HTTPPath:          "/mcp",
 			WatcherDebounceMs: 100,
 			IndexTimeoutMs:    60000, // Default 60 second timeout for indexing operations
 		},
@@ -158,6 +165,9 @@ func Validate(cfg *Config) []string {
 	if cfg.Embedding.BatchSize < 1 || cfg.Embedding.BatchSize > 1000 {
 		warnings = append(warnings, "Embedding batch size must be between 1 and 1000")
 	}
+	if cfg.Embedding.MaxConcurrency < 1 || cfg.Embedding.MaxConcurrency > 100 {
+		warnings = append(warnings, "Embedding max concurrency must be between 1 and 100")
+	}
 
 	// Validate database settings
 	if cfg.Database.Backend == "surrealdb" {
@@ -176,6 +186,13 @@ func Validate(cfg *Config) []string {
 	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
 		warnings = append(warnings, "Server port must be between 1 and 65535")
 	}
+	if cfg.Server.Transport != "" {
+		switch cfg.Server.Transport {
+		case "stdio", "sse", "streamable-http", "both", "auto":
+		default:
+			warnings = append(warnings, "Server transport must be one of: stdio, sse, streamable-http, both, auto")
+		}
+	}
 	if cfg.Server.WatcherDebounceMs < 10 {
 		warnings = append(warnings, "Watcher debounce must be at least 10ms")
 	}
@@ -187,6 +204,9 @@ func Validate(cfg *Config) []string {
 	}
 	if cfg.Server.IndexTimeoutMs > 300000 {
 		warnings = append(warnings, "Index timeout exceeds reasonable maximum (300 seconds)")
+	}
+	if cfg.Server.HTTPPath != "" && !strings.HasPrefix(cfg.Server.HTTPPath, "/") {
+		warnings = append(warnings, "Server http_path must start with '/'")
 	}
 
 	return warnings
@@ -238,6 +258,11 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("CODELOOM_OLLAMA_URL"); v != "" {
 		cfg.Embedding.BaseURL = v
 	}
+	if v := os.Getenv("CODELOOM_EMBEDDING_MAX_CONCURRENCY"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Embedding.MaxConcurrency = i
+		}
+	}
 
 	// Database settings
 	if v := os.Getenv("CODELOOM_SURREALDB_URL"); v != "" {
@@ -275,5 +300,11 @@ func applyEnvOverrides(cfg *Config) {
 		if i, err := strconv.Atoi(v); err == nil {
 			cfg.Server.IndexTimeoutMs = i
 		}
+	}
+	if v := os.Getenv("CODELOOM_TRANSPORT"); v != "" {
+		cfg.Server.Transport = v
+	}
+	if v := os.Getenv("CODELOOM_HTTP_PATH"); v != "" {
+		cfg.Server.HTTPPath = v
 	}
 }

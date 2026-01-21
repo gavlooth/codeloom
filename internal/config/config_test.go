@@ -10,11 +10,17 @@ func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
 	// Test server defaults
-	if cfg.Server.Mode != "stdio" {
-		t.Errorf("Expected default Mode 'stdio', got '%s'", cfg.Server.Mode)
+	if cfg.Server.Mode != "" {
+		t.Errorf("Expected default Mode '', got '%s'", cfg.Server.Mode)
+	}
+	if cfg.Server.Transport != "sse" {
+		t.Errorf("Expected default Transport 'sse', got '%s'", cfg.Server.Transport)
 	}
 	if cfg.Server.Port != 3003 {
 		t.Errorf("Expected default Port 3003, got %d", cfg.Server.Port)
+	}
+	if cfg.Server.HTTPPath != "/mcp" {
+		t.Errorf("Expected default HTTPPath '/mcp', got '%s'", cfg.Server.HTTPPath)
 	}
 	if cfg.Server.WatcherDebounceMs != 100 {
 		t.Errorf("Expected default WatcherDebounceMs 100, got %d", cfg.Server.WatcherDebounceMs)
@@ -23,8 +29,8 @@ func TestDefaultConfig(t *testing.T) {
 	t.Log("PASS: Default config values are correct")
 }
 
-// TestConfigValidation verifies configuration validation logic
-func TestConfigValidation(t *testing.T) {
+// TestValidateConfig verifies config validation behavior.
+func TestValidateConfig(t *testing.T) {
 	// Test valid config
 	cfg := DefaultConfig()
 	warnings := Validate(cfg)
@@ -126,4 +132,46 @@ func TestEnvOverrideIndexTimeout(t *testing.T) {
 	}
 
 	t.Log("PASS: Environment variable override works for index timeout")
+}
+
+// TestEnvOverrideTransport verifies transport override via environment variable
+func TestEnvOverrideTransport(t *testing.T) {
+	origVal := os.Getenv("CODELOOM_TRANSPORT")
+	defer func() {
+		if origVal == "" {
+			os.Unsetenv("CODELOOM_TRANSPORT")
+		} else {
+			os.Setenv("CODELOOM_TRANSPORT", origVal)
+		}
+	}()
+
+	os.Setenv("CODELOOM_TRANSPORT", "streamable-http")
+
+	cfg := DefaultConfig()
+	applyEnvOverrides(cfg)
+
+	if cfg.Server.Transport != "streamable-http" {
+		t.Errorf("Expected Transport 'streamable-http' from env, got '%s'", cfg.Server.Transport)
+	}
+}
+
+// TestEnvOverrideHTTPPath verifies HTTP path override via environment variable
+func TestEnvOverrideHTTPPath(t *testing.T) {
+	origVal := os.Getenv("CODELOOM_HTTP_PATH")
+	defer func() {
+		if origVal == "" {
+			os.Unsetenv("CODELOOM_HTTP_PATH")
+		} else {
+			os.Setenv("CODELOOM_HTTP_PATH", origVal)
+		}
+	}()
+
+	os.Setenv("CODELOOM_HTTP_PATH", "/custom")
+
+	cfg := DefaultConfig()
+	applyEnvOverrides(cfg)
+
+	if cfg.Server.HTTPPath != "/custom" {
+		t.Errorf("Expected HTTPPath '/custom' from env, got '%s'", cfg.Server.HTTPPath)
+	}
 }

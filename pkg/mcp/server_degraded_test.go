@@ -351,9 +351,14 @@ func TestSkipEmbeddingsParameter(t *testing.T) {
 	}
 
 	// Verify that skip_embeddings value is read from request
-	skipEmbedReadPattern := `request.Params.Arguments["skip_embeddings"]`
+	skipEmbedReadPattern := `args["skip_embeddings"]`
 	if !strings.Contains(handleIndexCode, skipEmbedReadPattern) {
-		t.Error("Expected to find skip_embeddings parameter read from request")
+		altPattern := `request.Params.Arguments["skip_embeddings"]`
+		if !strings.Contains(handleIndexCode, altPattern) {
+			t.Error("Expected to find skip_embeddings parameter read from request")
+		} else {
+			t.Log("✓ skip_embeddings parameter is read from request arguments")
+		}
 	} else {
 		t.Log("✓ skip_embeddings parameter is read from request arguments")
 	}

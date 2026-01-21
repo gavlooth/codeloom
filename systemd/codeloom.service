@@ -1,0 +1,19 @@
+[Unit]
+Description=CodeLoom MCP Server
+After=network.target
+
+[Service]
+Type=simple
+#User=codeloom
+#Group=codeloom
+EnvironmentFile=-/etc/codeloom/codeloom.env
+ExecStart=/home/heefoo/.local/bin/codeloom start --config /etc/codeloom/config.toml --transport=both --port=3003 --http-path=/mcp
+# Alternative single-transport modes:
+#ExecStart=/home/heefoo/.local/bin/codeloom start --config /etc/codeloom/config.toml --transport=sse --port=3003
+#ExecStart=/home/heefoo/.local/bin/codeloom start --config /etc/codeloom/config.toml --transport=streamable-http --port=3003 --http-path=/mcp
+Restart=on-failure
+RestartSec=5
+WorkingDirectory=/home/heefoo/codeloom
+
+[Install]
+WantedBy=multi-user.target

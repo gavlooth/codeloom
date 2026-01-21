@@ -1,11 +1,14 @@
 package mcp
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -467,7 +470,12 @@ type AgenticRequest struct {
 }
 
 func (s *Server) handleIndex(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	dir, ok := request.Params.Arguments["directory"].(string)
+	args := request.GetArguments()
+	if args == nil {
+		return errorResult("arguments must be an object")
+	}
+
+	dir, ok := args["directory"].(string)
 	if !ok {
 		return errorResult("directory argument must be a string")
 	}
@@ -482,7 +490,7 @@ func (s *Server) handleIndex(ctx context.Context, request mcp.CallToolRequest) (
 
 	// Parse exclude patterns
 	var excludePatterns []string
-	if patterns, ok := request.Params.Arguments["exclude_patterns"].([]interface{}); ok {
+	if patterns, ok := args["exclude_patterns"].([]interface{}); ok {
 		for _, p := range patterns {
 			if ps, ok := p.(string); ok {
 				excludePatterns = append(excludePatterns, ps)
@@ -492,7 +500,7 @@ func (s *Server) handleIndex(ctx context.Context, request mcp.CallToolRequest) (
 
 	// Parse skip_embeddings parameter
 	skipEmbeddings := false
-	if se, ok := request.Params.Arguments["skip_embeddings"].(bool); ok {
+	if se, ok := args["skip_embeddings"].(bool); ok {
 		skipEmbeddings = se
 	}
 
@@ -608,7 +616,11 @@ func (s *Server) handleAgenticContext(ctx context.Context, request mcp.CallToolR
 		return errorResult("LLM provider not configured. Set CODELOOM_LLM_PROVIDER and required API keys.")
 	}
 
-	req := parseAgenticRequest(request.Params.Arguments)
+	args := request.GetArguments()
+	if args == nil {
+		return errorResult("arguments must be an object")
+	}
+	req := parseAgenticRequest(args)
 
 	// Use a fresh context with timeout, derived from parent context
 	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
@@ -663,7 +675,11 @@ func (s *Server) handleAgenticImpact(ctx context.Context, request mcp.CallToolRe
 		return errorResult("LLM provider not configured. Set CODELOOM_LLM_PROVIDER and required API keys.")
 	}
 
-	req := parseAgenticRequest(request.Params.Arguments)
+	args := request.GetArguments()
+	if args == nil {
+		return errorResult("arguments must be an object")
+	}
+	req := parseAgenticRequest(args)
 
 	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
@@ -723,7 +739,11 @@ func (s *Server) handleAgenticArchitecture(ctx context.Context, request mcp.Call
 		return errorResult("LLM provider not configured. Set CODELOOM_LLM_PROVIDER and required API keys.")
 	}
 
-	req := parseAgenticRequest(request.Params.Arguments)
+	args := request.GetArguments()
+	if args == nil {
+		return errorResult("arguments must be an object")
+	}
+	req := parseAgenticRequest(args)
 
 	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
@@ -781,7 +801,11 @@ func (s *Server) handleAgenticQuality(ctx context.Context, request mcp.CallToolR
 		return errorResult("LLM provider not configured. Set CODELOOM_LLM_PROVIDER and required API keys.")
 	}
 
-	req := parseAgenticRequest(request.Params.Arguments)
+	args := request.GetArguments()
+	if args == nil {
+		return errorResult("arguments must be an object")
+	}
+	req := parseAgenticRequest(args)
 
 	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
@@ -840,16 +864,21 @@ Provide your analysis in this JSON format:
 }
 
 func (s *Server) handleSemanticSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	query, ok := request.Params.Arguments["query"].(string)
+	args := request.GetArguments()
+	if args == nil {
+		return errorResult("arguments must be an object")
+	}
+
+	query, ok := args["query"].(string)
 	if !ok {
 		return errorResult("query argument must be a string")
 	}
 	limit := 10
-	if l, ok := request.Params.Arguments["limit"].(float64); ok {
+	if l, ok := args["limit"].(float64); ok {
 		limit = int(l)
 	}
 	language := ""
-	if lang, ok := request.Params.Arguments["language"].(string); ok {
+	if lang, ok := args["language"].(string); ok {
 		language = lang
 	}
 
@@ -915,12 +944,17 @@ func (s *Server) handleSemanticSearch(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleTransitiveDeps(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	nodeID, ok := request.Params.Arguments["node_id"].(string)
+	args := request.GetArguments()
+	if args == nil {
+		return errorResult("arguments must be an object")
+	}
+
+	nodeID, ok := args["node_id"].(string)
 	if !ok {
 		return errorResult("node_id argument must be a string")
 	}
 	depth := 3
-	if d, ok := request.Params.Arguments["depth"].(float64); ok {
+	if d, ok := args["depth"].(float64); ok {
 		depth = int(d)
 	}
 
@@ -968,16 +1002,21 @@ func (s *Server) handleTransitiveDeps(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleTraceCallChain(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	from, ok := request.Params.Arguments["from"].(string)
+	args := request.GetArguments()
+	if args == nil {
+		return errorResult("arguments must be an object")
+	}
+
+	from, ok := args["from"].(string)
 	if !ok {
 		return errorResult("from argument must be a string")
 	}
-	to, ok := request.Params.Arguments["to"].(string)
+	to, ok := args["to"].(string)
 	if !ok {
 		return errorResult("to argument must be a string")
 	}
 	maxDepth := 10
-	if d, ok := request.Params.Arguments["max_depth"].(float64); ok {
+	if d, ok := args["max_depth"].(float64); ok {
 		maxDepth = int(d)
 	}
 
@@ -1024,7 +1063,12 @@ func (s *Server) handleTraceCallChain(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleWatch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	action, ok := request.Params.Arguments["action"].(string)
+	args := request.GetArguments()
+	if args == nil {
+		return errorResult("arguments must be an object")
+	}
+
+	action, ok := args["action"].(string)
 	if !ok {
 		return errorResult("action argument must be a string")
 	}
@@ -1033,7 +1077,7 @@ func (s *Server) handleWatch(ctx context.Context, request mcp.CallToolRequest) (
 	case "start":
 		// Get directories to watch
 		var dirs []string
-		if d, ok := request.Params.Arguments["directories"].([]interface{}); ok {
+		if d, ok := args["directories"].([]interface{}); ok {
 			for _, dir := range d {
 				if ds, ok := dir.(string); ok {
 					dirs = append(dirs, ds)
@@ -1476,37 +1520,265 @@ func (s *Server) ServeStdio(ctx context.Context) error {
 	return server.ServeStdio(s.mcp)
 }
 
-func (s *Server) ServeHTTP(ctx context.Context, port int) error {
+func (s *Server) ServeSSE(ctx context.Context, port int) error {
 	addr := fmt.Sprintf(":%d", port)
-	log.Printf("Starting MCP server on http://localhost%s\n", addr)
-
-	// Create SSE handler - it handles both /sse (GET) and /message (POST) internally
-	sseHandler := server.NewSSEServer(s.mcp,
-		server.WithBaseURL(fmt.Sprintf("http://127.0.0.1:%d", port)),
-	)
+	log.Printf("Starting MCP server (SSE) on http://localhost%s\n", addr)
 
 	mux := http.NewServeMux()
-	// Mount SSEServer at root so it can handle /sse and /message paths
-	mux.Handle("/", sseHandler)
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status": "ok"}`))
-	})
-
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: mux,
+		Addr: addr,
 	}
+
+	// Create SSE handler with explicit endpoints.
+	sseHandler := server.NewSSEServer(s.mcp,
+		server.WithBaseURL(fmt.Sprintf("http://127.0.0.1:%d", port)),
+		server.WithUseFullURLForMessageEndpoint(true),
+		server.WithHTTPServer(srv),
+	)
+
+	mux.Handle("/sse", wrapHTTPHandler(sseHandler.SSEHandler(), "sse"))
+	mux.Handle("/message", wrapHTTPHandler(sseHandler.MessageHandler(), "sse"))
+	mux.Handle("/health", wrapHTTPHandler(http.HandlerFunc(s.handleHealth), "sse"))
+	mux.Handle("/ready", wrapHTTPHandler(http.HandlerFunc(s.handleReady), "sse"))
+
+	srv.Handler = mux
 
 	go func() {
 		<-ctx.Done()
-		srv.Shutdown(context.Background())
+		sseHandler.Shutdown(context.Background())
+	}()
+
+	if err := sseHandler.Start(addr); err != http.ErrServerClosed {
+		return err
+	}
+	return nil
+}
+
+// ServeHTTP is kept for backward compatibility and uses SSE transport.
+func (s *Server) ServeHTTP(ctx context.Context, port int) error {
+	return s.ServeSSE(ctx, port)
+}
+
+// ServeStreamableHTTP starts the MCP server using the Streamable HTTP transport.
+func (s *Server) ServeStreamableHTTP(ctx context.Context, port int, endpointPath string) error {
+	addr := fmt.Sprintf(":%d", port)
+	path := normalizeHTTPPath(endpointPath)
+
+	log.Printf("Starting MCP server (Streamable HTTP) on http://localhost%s%s\n", addr, path)
+
+	mux := http.NewServeMux()
+	srv := &http.Server{
+		Addr: addr,
+	}
+
+	httpServer := server.NewStreamableHTTPServer(
+		s.mcp,
+		server.WithEndpointPath(path),
+		server.WithStreamableHTTPServer(srv),
+	)
+
+	mux.Handle(path, wrapHTTPHandler(httpServer, "streamable-http"))
+	mux.Handle("/health", wrapHTTPHandler(http.HandlerFunc(s.handleHealth), "streamable-http"))
+	mux.Handle("/ready", wrapHTTPHandler(http.HandlerFunc(s.handleReady), "streamable-http"))
+
+	srv.Handler = mux
+
+	go func() {
+		<-ctx.Done()
+		httpServer.Shutdown(context.Background())
+	}()
+
+	if err := httpServer.Start(addr); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ServeHTTPMulti starts both SSE and Streamable HTTP transports on the same HTTP server.
+func (s *Server) ServeHTTPMulti(ctx context.Context, port int, endpointPath string) error {
+	addr := fmt.Sprintf(":%d", port)
+	path := normalizeHTTPPath(endpointPath)
+
+	log.Printf("Starting MCP server (SSE + Streamable HTTP) on http://localhost%s\n", addr)
+	log.Printf("SSE endpoints: /sse (GET), /message (POST); Streamable HTTP endpoint: %s\n", path)
+
+	mux := http.NewServeMux()
+	srv := &http.Server{
+		Addr: addr,
+	}
+
+	sseHandler := server.NewSSEServer(s.mcp,
+		server.WithBaseURL(fmt.Sprintf("http://127.0.0.1:%d", port)),
+		server.WithUseFullURLForMessageEndpoint(true),
+		server.WithHTTPServer(srv),
+	)
+
+	streamable := server.NewStreamableHTTPServer(
+		s.mcp,
+		server.WithEndpointPath(path),
+		server.WithStreamableHTTPServer(srv),
+	)
+
+	mux.Handle("/sse", wrapHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if shouldServeSSE(r) {
+			sseHandler.SSEHandler().ServeHTTP(w, r)
+			return
+		}
+		logJSON("warn", "sse_compat_streamable", map[string]interface{}{
+			"method": r.Method,
+			"path":   r.URL.Path,
+		})
+		streamable.ServeHTTP(w, r)
+	}), "sse"))
+	mux.Handle("/message", wrapHTTPHandler(sseHandler.MessageHandler(), "sse"))
+	mux.Handle(path, wrapHTTPHandler(streamable, "streamable-http"))
+	mux.Handle("/health", wrapHTTPHandler(http.HandlerFunc(s.handleHealth), "multi"))
+	mux.Handle("/ready", wrapHTTPHandler(http.HandlerFunc(s.handleReady), "multi"))
+
+	srv.Handler = mux
+
+	go func() {
+		<-ctx.Done()
+		_ = sseHandler.Shutdown(context.Background())
+		_ = streamable.Shutdown(context.Background())
 	}()
 
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		return err
 	}
 	return nil
+}
+
+func shouldServeSSE(r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	if r.Header.Get("Mcp-Session-Id") != "" {
+		return false
+	}
+	accept := r.Header.Get("Accept")
+	return strings.Contains(accept, "text/event-stream")
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.status = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+func (sr *statusRecorder) Flush() {
+	if flusher, ok := sr.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (sr *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hijacker, ok := sr.ResponseWriter.(http.Hijacker); ok {
+		return hijacker.Hijack()
+	}
+	return nil, nil, fmt.Errorf("hijacker not supported")
+}
+
+func (sr *statusRecorder) Push(target string, opts *http.PushOptions) error {
+	if pusher, ok := sr.ResponseWriter.(http.Pusher); ok {
+		return pusher.Push(target, opts)
+	}
+	return http.ErrNotSupported
+}
+
+func wrapHTTPHandler(next http.Handler, component string) http.Handler {
+	return withCORS(withRequestLogging(next, component))
+}
+
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Mcp-Session-Id")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func withRequestLogging(next http.Handler, component string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(recorder, r)
+		logJSON("info", "http_request", map[string]interface{}{
+			"component":   component,
+			"method":      r.Method,
+			"path":        r.URL.Path,
+			"status":      recorder.status,
+			"duration_ms": time.Since(start).Milliseconds(),
+		})
+	})
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "ok",
+	})
+}
+
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	indexerReady := s.indexer != nil
+	storageReady := s.storage != nil
+	embeddingReady := s.embedding != nil
+	s.mu.RUnlock()
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":              "ok",
+		"ready":               true,
+		"indexer_initialized": indexerReady,
+		"storage_initialized": storageReady,
+		"embedding_available": embeddingReady,
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload map[string]interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(payload); err != nil {
+		log.Printf("Failed to write JSON response: %v", err)
+	}
+}
+
+func normalizeHTTPPath(path string) string {
+	if path == "" {
+		return "/mcp"
+	}
+	if !strings.HasPrefix(path, "/") {
+		return "/" + path
+	}
+	return path
+}
+
+func logJSON(level, msg string, fields map[string]interface{}) {
+	payload := map[string]interface{}{
+		"level": level,
+		"msg":   msg,
+		"ts":    time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	for k, v := range fields {
+		payload[k] = v
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Failed to marshal log payload: %v", err)
+		return
+	}
+	fmt.Fprintln(os.Stdout, string(data))
 }
 
 // Close cleans up resources

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -22,33 +23,11 @@ import (
 func main() {
 	var (
 		configPath string
-		mode       string
-		port       int
 		watch      bool
 	)
 
-	flag.StringVar(&configPath, "config", "", "Path to config file")
-	flag.StringVar(&mode, "mode", "stdio", "Server mode: stdio or http")
-	flag.IntVar(&port, "port", 3003, "HTTP server port")
-	flag.BoolVar(&watch, "watch", false, "Watch for file changes")
-	flag.Parse()
-
-	// Handle subcommands
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "start":
-			// Parse flags after subcommand
-			startCmd := flag.NewFlagSet("start", flag.ExitOnError)
-			startCmd.StringVar(&configPath, "config", "", "Path to config file")
-			startCmd.IntVar(&port, "port", 3003, "HTTP server port")
-			startCmd.BoolVar(&watch, "watch", false, "Watch for file changes")
-
-			if len(os.Args) > 2 {
-				mode = os.Args[2]
-				if len(os.Args) > 3 {
-					startCmd.Parse(os.Args[3:])
-				}
-			}
 		case "index":
 			indexCmd(os.Args[2:])
 			return
@@ -58,14 +37,93 @@ func main() {
 		case "help":
 			printHelp()
 			return
+		case "start":
+			startCmd := flag.NewFlagSet("start", flag.ExitOnError)
+			var transportFlag stringFlag
+			transportFlag.value = "sse"
+			var portFlag intFlag
+			var httpPathFlag stringFlag
+
+			startCmd.StringVar(&configPath, "config", "", "Path to config file")
+			startCmd.Var(&transportFlag, "transport", "Transport: stdio, sse, streamable-http, both, auto")
+			startCmd.Var(&portFlag, "port", "HTTP server port")
+			startCmd.Var(&httpPathFlag, "http-path", "Streamable HTTP endpoint path")
+			startCmd.BoolVar(&watch, "watch", false, "Watch for file changes")
+
+			if len(os.Args) > 2 && !strings.HasPrefix(os.Args[2], "-") {
+				transportFlag.value = os.Args[2]
+				transportFlag.set = true
+				startCmd.Parse(os.Args[3:])
+			} else {
+				startCmd.Parse(os.Args[2:])
+			}
+
+			runServer(configPath, transportFlag, portFlag, httpPathFlag, watch)
+			return
 		}
 	}
+
+	startCmd := flag.NewFlagSet("start", flag.ExitOnError)
+	var transportFlag stringFlag
+	transportFlag.value = "sse"
+	var portFlag intFlag
+	var httpPathFlag stringFlag
+	startCmd.StringVar(&configPath, "config", "", "Path to config file")
+	startCmd.Var(&transportFlag, "transport", "Transport: stdio, sse, streamable-http, both, auto")
+	startCmd.Var(&portFlag, "port", "HTTP server port")
+	startCmd.Var(&httpPathFlag, "http-path", "Streamable HTTP endpoint path")
+	startCmd.BoolVar(&watch, "watch", false, "Watch for file changes")
+	startCmd.Parse(os.Args[1:])
+
+	runServer(configPath, transportFlag, portFlag, httpPathFlag, watch)
+}
+
+type stringFlag struct {
+	value string
+	set   bool
+}
+
+func (f *stringFlag) String() string {
+	return f.value
+}
+
+func (f *stringFlag) Set(val string) error {
+	f.value = val
+	f.set = true
+	return nil
+}
+
+type intFlag struct {
+	value int
+	set   bool
+}
+
+func (f *intFlag) String() string {
+	return fmt.Sprintf("%d", f.value)
+}
+
+func (f *intFlag) Set(val string) error {
+	parsed, err := strconv.Atoi(val)
+	if err != nil {
+		return fmt.Errorf("invalid int value %q", val)
+	}
+	f.value = parsed
+	f.set = true
+	return nil
+}
+
+func runServer(configPath string, transportFlag stringFlag, portFlag intFlag, httpPathFlag stringFlag, watch bool) {
+	_ = watch
 
 	// Load configuration
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+
+	transport := resolveTransport(transportFlag, cfg)
+	port := resolvePort(portFlag, cfg)
+	httpPath := resolveHTTPPath(httpPathFlag, cfg)
 
 	// Create LLM provider
 	llmProvider, err := llm.NewProvider(cfg.LLM)
@@ -93,20 +151,113 @@ func main() {
 	}()
 
 	// Start server
-	switch mode {
+	switch transport {
 	case "stdio":
 		log.Println("Starting MCP server in stdio mode...")
 		if err := server.ServeStdio(ctx); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
-	case "http":
-		log.Printf("Starting MCP server on port %d...\n", port)
-		if err := server.ServeHTTP(ctx, port); err != nil {
+	case "sse":
+		log.Printf("Starting MCP server (SSE) on port %d...\n", port)
+		if err := server.ServeSSE(ctx, port); err != nil {
+			log.Fatalf("Server error: %v", err)
+		}
+	case "streamable-http":
+		log.Printf("Starting MCP server (Streamable HTTP) on port %d, path %s...\n", port, httpPath)
+		if err := server.ServeStreamableHTTP(ctx, port, httpPath); err != nil {
+			log.Fatalf("Server error: %v", err)
+		}
+	case "both":
+		log.Printf("Starting MCP server (SSE + Streamable HTTP) on port %d, path %s...\n", port, httpPath)
+		if err := server.ServeHTTPMulti(ctx, port, httpPath); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
 	default:
-		log.Fatalf("Unknown mode: %s", mode)
+		log.Fatalf("Unknown transport: %s", transport)
 	}
+}
+
+func resolveTransport(flagVal stringFlag, cfg *config.Config) string {
+	transport := flagVal.value
+	sourceDefault := false
+	if !flagVal.set {
+		if cfg.Server.Transport != "" {
+			transport = cfg.Server.Transport
+		} else if cfg.Server.Mode != "" {
+			transport = cfg.Server.Mode
+		} else {
+			transport = "sse"
+			sourceDefault = true
+		}
+	}
+
+	transport = normalizeTransport(transport)
+
+	if transport == "auto" {
+		return detectTransport()
+	}
+
+	if !flagVal.set && sourceDefault && !stdinIsTTY() {
+		return "stdio"
+	}
+
+	return transport
+}
+
+func resolvePort(flagVal intFlag, cfg *config.Config) int {
+	if flagVal.set && flagVal.value > 0 {
+		return flagVal.value
+	}
+	if cfg.Server.Port > 0 {
+		return cfg.Server.Port
+	}
+	return 3003
+}
+
+func resolveHTTPPath(flagVal stringFlag, cfg *config.Config) string {
+	if flagVal.set && flagVal.value != "" {
+		return flagVal.value
+	}
+	if cfg.Server.HTTPPath != "" {
+		return cfg.Server.HTTPPath
+	}
+	return "/mcp"
+}
+
+func normalizeTransport(val string) string {
+	switch strings.ToLower(strings.TrimSpace(val)) {
+	case "", "sse":
+		return "sse"
+	case "stdio":
+		return "stdio"
+	case "http":
+		return "both"
+	case "streamablehttp":
+		return "streamable-http"
+	case "streamable-http":
+		return "streamable-http"
+	case "both", "multi":
+		return "both"
+	case "auto":
+		return "auto"
+	default:
+		return val
+	}
+}
+
+func detectTransport() string {
+	if stdinIsTTY() {
+		return "sse"
+	}
+	return "stdio"
+}
+
+func stdinIsTTY() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return true
+	}
+	return (info.Mode() & os.ModeCharDevice) != 0
 }
 
 func indexCmd(args []string) {
@@ -243,7 +394,7 @@ func printHelp() {
 	fmt.Print(`codeloom - Code intelligence MCP server
 
 Commands:
-  start <mode>   Start the MCP server (stdio or http)
+  start          Start the MCP server
   index <dir>    Index a codebase directory into the code graph
   version        Show version
   help           Show this help
@@ -255,16 +406,23 @@ Index Options:
   --verbose        Show detailed errors and warnings
 
 Server Options:
-  --config       Path to config file
-  --port         HTTP server port (default: 3003)
-  --watch        Watch for file changes
+  --config        Path to config file
+  --transport     Transport: stdio, sse, streamable-http, both, auto (default: sse)
+  --port          HTTP server port (default: from config or 3003)
+  --http-path     Streamable HTTP endpoint path (default: from config or /mcp)
+  --watch         Watch for file changes
 
 Examples:
   codeloom index ./src                     Index src directory
   codeloom index --verbose ./              Index current directory with detailed errors
   codeloom index --no-embeddings ./pkg     Index without embeddings (faster)
-  codeloom start stdio                     Start MCP server on stdin/stdout
-  codeloom start http --port 3003          Start MCP server on HTTP
+  codeloom start --transport=stdio         Start MCP server on stdin/stdout
+  codeloom start --transport=sse           Start MCP server on SSE (http://localhost:3003/sse)
+  codeloom start --transport=streamable-http --http-path=/mcp
+                                          Start MCP server on Streamable HTTP (http://localhost:3003/mcp)
+  codeloom start --transport=both --http-path=/mcp
+                                          Start MCP server with SSE + Streamable HTTP on the same port
+  codeloom start --transport=auto          Auto-detect transport (stdio if stdin is piped)
 
 Environment Variables:
   CODELOOM_LLM_PROVIDER           LLM provider (openai, anthropic, ollama, etc.)
@@ -273,5 +431,7 @@ Environment Variables:
   OPENAI_API_KEY                  API key for OpenAI-compatible providers
   ANTHROPIC_API_KEY               API key for Anthropic
   CODELOOM_SURREALDB_URL          SurrealDB connection URL
+  CODELOOM_TRANSPORT              Transport override (stdio, sse, streamable-http, auto)
+  CODELOOM_HTTP_PATH              Streamable HTTP path override
 `)
 }

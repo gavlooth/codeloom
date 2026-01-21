@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codeloom": {
+      "command": "codeloom",
+      "args": ["start", "-transport=stdio"]
+    }
+  }
+}
